@@ -23,7 +23,7 @@ The current Trakt and MDBList importers process movie lists. The exporter can ha
 
 ## Saltbox deployment
 
-Saltbox’s guides for [your own containers](https://docs.saltbox.dev/advanced/your-own-containers/) and the [Traefik template](https://docs.saltbox.dev/reference/modules/traefik_template/) describe the supported integration pattern. This Compose file uses Saltbox’s external `saltbox` network and Traefik labels. Set the hostname and domain in `.env`; keep API keys and runtime data out of Git.
+Saltbox’s [your own containers](https://docs.saltbox.dev/advanced/your-own-containers/) guide recommends Docker Compose for custom containers. The [Traefik template](https://docs.saltbox.dev/reference/modules/traefik_template/) generates a Compose file with Saltbox’s Traefik labels.
 
 1. Clone this repository to a host directory:
 
@@ -41,13 +41,26 @@ Saltbox’s guides for [your own containers](https://docs.saltbox.dev/advanced/y
 
    Set `DOMAIN` and `EMBYCOLLECTIONMANAGER_HOST` in `.env`; enter API keys, the Emby URL, and user ID in `config/config.yaml`.
 
-3. Create the export directory and ensure it is writable by the container.
-4. Mount each Emby media root into this container **read-only at the same absolute path Emby uses**. The example Compose file defaults to `/mnt/unionfs`. If you use multiple roots, add a read-only volume for each root and list their in-container paths in `LIBRARY_EXPORT_MEDIA_MOUNTS`, separated by colons.
-5. Mount `LIBRARY_EXPORT_OUTPUT_MOUNT` read-write into this container and ensure Emby can see that same path. If Emby does not already mount its parent path, add a matching volume to the Emby container.
-6. In Saltbox, register this service using the custom-container workflow or the Traefik template with the provided labels and external `saltbox` network. Keep API keys and personal settings in the local, Git-ignored files.
-7. Build and start the service:
+3. For a Saltbox-generated Traefik template, run this on the Saltbox host:
 
    ```sh
+   sb install generate-traefik-template
+   ```
+
+   Enter `embycollectionmanager` as the service name, your chosen Emby Collection Manager hostname, and port `8282`. Saltbox writes the generated template to `/tmp/docker-compose.yml`. Use its Traefik labels and `saltbox` network in the checked-in `compose.yaml`; keep this app’s `build: .`, environment, and media/config/output volume mounts. The repository Compose file already includes a generic Traefik template setup, so you can use it directly after configuring `.env`.
+
+4. Create the local output directory and ensure it is writable by the container:
+
+   ```sh
+   mkdir -p /mnt/local/embycollectionmanager-library-exports
+   ```
+
+5. Mount each Emby media root into the manager **read-only at the same absolute path Emby uses**. The example Compose file defaults to `/mnt/unionfs`. If you use multiple roots, add a read-only volume for each root and list their in-container paths in `LIBRARY_EXPORT_MEDIA_MOUNTS`, separated by colons.
+6. Mount `LIBRARY_EXPORT_OUTPUT_MOUNT` read-write into the manager and ensure Emby can see that same path. If Emby does not already mount its parent path, add a matching volume to the Emby container.
+7. Validate, build, and start the service:
+
+   ```sh
+   docker compose config --quiet
    docker compose build embycollectionmanager
    docker compose up -d embycollectionmanager
    ```
