@@ -1,0 +1,13 @@
+.env
+.env.*
+!.env.example
+__pycache__/
+*.py[cod]
+*.log
+logs/
+config/config.yaml
+config/*.json
+traktlists/*
+!traktlists/README.md
+mdblists/*
+!mdblists/README.md

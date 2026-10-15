@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block title %}Libraries - Emby Collection Manager{% endblock %}
+{% block content %}
+<h1 style="margin-bottom:20px">Library Selection</h1>
+{% if saved %}<div class="alert alert-success">Library selection saved!</div>{% endif %}
+{% if not libraries %}
+<div class="alert alert-info">No libraries found. Configure Emby server URL, API key, and user ID in <a href="/settings">Settings</a>.</div>
+{% else %}
+<div class="card">
+    <p style="margin-bottom:15px;color:var(--text-dim)">Select which Emby libraries to scan. If none selected, all libraries are scanned.</p>
+    <form method="POST">
+        {% for lib in libraries %}
+        <div class="lib-item"><div class="lib-info"><div class="lib-name">{{ lib.Name }}</div><div class="lib-type">{{ lib.CollectionType or 'mixed' }} - ID: {{ lib.Id }}</div></div><input type="checkbox" name="library_ids" value="{{ lib.Id }}" class="checkbox" {% if lib.Id in selected %}checked{% endif %}></div>
+        {% endfor %}
+        <div style="margin-top:15px"><button type="submit" class="btn btn-primary">Save Selection</button></div>
+    </form>
+</div>
+{% endif %}
+{% endblock %}

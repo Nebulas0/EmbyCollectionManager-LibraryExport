@@ -1,0 +1,49 @@
+services:
+  embycollectionmanager:
+    restart: unless-stopped
+    container_name: embycollectionmanager
+    image: embycollectionmanager:latest
+    hostname: embycollectionmanager
+    build: .
+    environment:
+      PUID: "${PUID:-1000}"
+      PGID: "${PGID:-1000}"
+      TZ: "${TZ:-Etc/UTC}"
+      WEBUI_PORT: "${WEBUI_PORT:-8282}"
+      SYNC_TARGET: auto
+      LIBRARY_EXPORT_MEDIA_MOUNTS: "${LIBRARY_EXPORT_MEDIA_MOUNTS:-/mnt/unionfs}"
+      LIBRARY_EXPORT_DEFAULT_MEDIA_ROOT: "${LIBRARY_EXPORT_DEFAULT_MEDIA_ROOT:-/mnt/unionfs}"
+      LIBRARY_EXPORT_OUTPUT_MOUNT: "${LIBRARY_EXPORT_OUTPUT_MOUNT:-/mnt/local/embycollectionmanager-library-exports}"
+    networks:
+      - saltbox
+    labels:
+      com.github.saltbox.saltbox_managed: "true"
+      diun.enable: "true"
+      traefik.enable: "true"
+      traefik.http.routers.embycollectionmanager-http.entrypoints: web
+      traefik.http.routers.embycollectionmanager-http.middlewares: globalHeaders@file,redirect-to-https@docker,robotHeaders@file,authelia@docker
+      traefik.http.routers.embycollectionmanager-http.priority: "20"
+      traefik.http.routers.embycollectionmanager-http.rule: "Host(`${EMBYCOLLECTIONMANAGER_HOST:-embycollectionmanager.example.com}`)"
+      traefik.http.routers.embycollectionmanager-http.service: embycollectionmanager-http
+      traefik.http.routers.embycollectionmanager.entrypoints: websecure
+      traefik.http.routers.embycollectionmanager.middlewares: globalHeaders@file,secureHeaders@file,robotHeaders@file,authelia@docker
+      traefik.http.routers.embycollectionmanager.priority: "20"
+      traefik.http.routers.embycollectionmanager.rule: "Host(`${EMBYCOLLECTIONMANAGER_HOST:-embycollectionmanager.example.com}`)"
+      traefik.http.routers.embycollectionmanager.service: embycollectionmanager
+      traefik.http.routers.embycollectionmanager.tls.certresolver: cfdns
+      traefik.http.routers.embycollectionmanager.tls.domains[0].main: "${DOMAIN:-example.com}"
+      traefik.http.routers.embycollectionmanager.tls.domains[0].sans: "*.${DOMAIN:-example.com}"
+      traefik.http.routers.embycollectionmanager.tls.options: securetls@file
+      traefik.http.services.embycollectionmanager-http.loadbalancer.server.port: "8282"
+      traefik.http.services.embycollectionmanager.loadbalancer.server.port: "8282"
+    volumes:
+      - ./config:/app/config
+      - ./traktlists:/app/traktlists
+      - ./mdblists:/app/mdblists
+      - ${LIBRARY_EXPORT_MEDIA_HOST_ROOT:-/mnt/unionfs}:${LIBRARY_EXPORT_MEDIA_HOST_ROOT:-/mnt/unionfs}:ro,rslave
+      - ${LIBRARY_EXPORT_OUTPUT_MOUNT:-/mnt/local/embycollectionmanager-library-exports}:${LIBRARY_EXPORT_OUTPUT_MOUNT:-/mnt/local/embycollectionmanager-library-exports}:rw
+      - /etc/localtime:/etc/localtime:ro
+
+networks:
+  saltbox:
+    external: true

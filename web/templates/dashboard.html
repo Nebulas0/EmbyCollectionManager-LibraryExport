@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block title %}Dashboard - Emby Collection Manager{% endblock %}
+{% block content %}
+<h1 style="margin-bottom:20px">Dashboard</h1>
+<div class="stat-grid">
+    <div class="stat-card"><div class="stat-value">{{ enabled_count }}</div><div class="stat-label">Collections Enabled</div></div>
+    <div class="stat-card"><div class="stat-value">{{ total_count }}</div><div class="stat-label">Total Available</div></div>
+    <div class="stat-card"><div class="stat-value">{{ state.get('sync_interval_hours',24) }}h</div><div class="stat-label">Sync Interval</div></div>
+    <div class="stat-card"><div class="stat-value" id="sync-indicator"><span class="sync-dot {% if sync_state.running %}running{% elif sync_state.last_status == 'success' %}success{% elif sync_state.last_status == 'error' %}error{% else %}idle{% endif %}"></span></div><div class="stat-label" id="sync-label">{% if sync_state.running %}Syncing...{% elif sync_state.last_status == 'success' %}Last sync OK{% elif sync_state.last_status == 'error' %}Sync failed{% else %}Idle{% endif %}</div></div>
+</div>
+
+<div class="card">
+    <h2>Sync Control</h2>
+    <div style="margin-bottom:10px"><span>Last run: {{ sync_state.last_run or 'Never' }}</span>{% if sync_state.last_error %}<span style="color:var(--red);margin-left:15px">Error: {{ sync_state.last_error }}</span>{% endif %}</div>
+    <div id="next-sync-display" style="margin-bottom:15px;color:var(--text-dim)"></div>
+    <button class="btn btn-primary" id="sync-btn" onclick="triggerSync()" {% if sync_state.running %}disabled{% endif %}>{% if sync_state.running %}Syncing...{% else %}Sync Now{% endif %}</button>
+    <a href="/logs" class="btn btn-secondary">View Logs</a>
+</div>
+
+<div class="card">
+    <h2>Sync History</h2>
+    <div id="sync-history-list"></div>
+</div>
+
+<div class="card">
+    <h2>Quick Status</h2>
+    <div class="form-group"><label>TMDb API Key</label><input type="text" value="{{ config.get('tmdb',{}).get('api_key','Not set') }}" readonly></div>
+    <div class="form-group"><label>Emby Server</label><input type="text" value="{{ config.get('emby',{}).get('server_url','Not set') }}" readonly></div>
+    <div class="form-group"><label>Trakt</label><input type="text" value="{{ 'Configured' if config.get('trakt',{}).get('client_id') and config.get('trakt',{}).get('client_id') != 'YOUR TRAKT CLIENT ID' else 'Not configured' }}" readonly></div>
+    <div class="form-group"><label>MDBList</label><input type="text" value="{{ 'Configured' if config.get('mdblist',{}).get('api_key') and config.get('mdblist',{}).get('api_key') != 'YOUR MDBLIST API KEY' else 'Not configured' }}" readonly></div>
+    <a href="/settings" class="btn btn-secondary">Edit Settings</a>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+async function triggerSync(){const b=document.getElementById('sync-btn');b.disabled=true;b.textContent='Syncing...';try{const r=await fetch('/api/sync',{method:'POST'});const d=await r.json();if(d.error){alert(d.error);b.disabled=false;b.textContent='Sync Now'}}catch(e){alert('Failed: '+e);b.disabled=false;b.textContent='Sync Now'}}
+setInterval(async()=>{try{const r=await fetch('/api/sync_status');const d=await r.json();const b=document.getElementById('sync-btn');const i=document.getElementById('sync-indicator');const l=document.getElementById('sync-label');if(d.running){b.disabled=true;b.textContent='Syncing...';i.innerHTML='<span class="sync-dot running"></span>';l.textContent='Syncing...'}else{b.disabled=false;b.textContent='Sync Now';if(d.last_status==='success'){i.innerHTML='<span class="sync-dot success"></span>';l.textContent='Last sync OK'}else if(d.last_status==='error'){i.innerHTML='<span class="sync-dot error"></span>';l.textContent='Sync failed'}else{i.innerHTML='<span class="sync-dot idle"></span>';l.textContent='Idle'}}}catch(e){}},3000);
+
+// Next sync time
+async function loadNextSync(){try{const r=await fetch('/api/next_sync');const d=await r.json();if(d.next_sync_display){document.getElementById('next-sync-display').textContent='Next scheduled sync: '+d.next_sync_display}}catch(e){}}
+loadNextSync();setInterval(loadNextSync,30000);
+
+// Sync history
+async function loadHistory(){try{const r=await fetch('/api/sync_history');const d=await r.json();const list=document.getElementById('sync-history-list');if(d.length===0){list.innerHTML='<p style="color:var(--text-dim)">No sync history yet.</p>';return}list.innerHTML=d.map(h=>{const statusColor=h.status==='success'?'var(--green)':'var(--red)';const single=h.single_recipe?` (${h.single_recipe})`:'';return `<div style="padding:8px 0;border-bottom:1px solid var(--border)"><span style="color:${statusColor}">●</span> <span>${h.timestamp}</span> <span style="color:var(--text-dim)">- ${h.duration}${single}</span>${h.error?`<br><span style="color:var(--red);font-size:0.85rem">${h.error}</span>`:''}</div>`}).join('')+'<button class="btn btn-secondary btn-sm" style="margin-top:10px" onclick="clearHistory()">Clear History</button>'}catch(e){}}
+loadHistory();
+async function clearHistory(){if(!confirm('Clear sync history?'))return;await fetch('/api/sync_history_clear',{method:'POST'});loadHistory()}
+</script>
+{% endblock %}

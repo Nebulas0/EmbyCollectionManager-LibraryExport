@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% block title %}Logs - Emby Collection Manager{% endblock %}
+{% block content %}
+<h1 style="margin-bottom:20px">Sync Logs</h1>
+<div class="card">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:15px">
+        <div>
+            <button class="btn btn-secondary btn-sm" onclick="refreshLogs()">Refresh</button>
+            <label class="btn btn-secondary btn-sm" style="cursor:pointer">Auto-refresh<input type="checkbox" id="auto-refresh" onchange="toggleAutoRefresh()" style="margin-left:5px"></label>
+            <span id="log-count" style="color:var(--text-dim);margin-left:10px;font-size:0.85rem"></span>
+        </div>
+        <div>
+            <button class="btn btn-secondary btn-sm" onclick="downloadLogs()">Download</button>
+        </div>
+    </div>
+    <pre id="log-content" style="background:var(--bg);padding:15px;border-radius:4px;font-size:0.8rem;max-height:600px;overflow-y:auto;white-space:pre-wrap;word-break:break-all;font-family:'Courier New',monospace;color:var(--text-dim)">Loading...</pre>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+let autoRefresh = null;
+async function refreshLogs(){
+    try{
+        const res=await fetch('/api/logs?lines=200');
+        const data=await res.json();
+        const content=document.getElementById('log-content');
+        content.textContent=data.lines||'(no logs)';
+        content.scrollTop=content.scrollHeight;
+        const lines=(data.lines||'').split('\n').filter(l=>l.trim()).length;
+        document.getElementById('log-count').textContent=lines+' lines';
+    }catch(e){document.getElementById('log-content').textContent='Error: '+e}
+}
+function toggleAutoRefresh(){
+    if(document.getElementById('auto-refresh').checked){
+        autoRefresh=setInterval(refreshLogs,2000);
+    }else{
+        clearInterval(autoRefresh);autoRefresh=null;
+    }
+}
+function downloadLogs(){
+    const content=document.getElementById('log-content').textContent;
+    const blob=new Blob([content],{type:'text/plain'});
+    const a=document.createElement('a');
+    a.href=URL.createObjectURL(blob);
+    a.download='ecm_logs_'+new Date().toISOString().slice(0,19).replace(/:/g,'-')+'.txt';
+    a.click();
+}
+refreshLogs();
+</script>
+{% endblock %}

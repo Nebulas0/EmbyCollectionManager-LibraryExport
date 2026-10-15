@@ -1,0 +1,93 @@
+import unittest
+from unittest.mock import Mock
+
+from src.emby_client import EmbyClient
+
+
+class EmbyLibraryApiTests(unittest.TestCase):
+    def setUp(self):
+        self.client = EmbyClient('http://emby.invalid', 'token', 'user')
+
+    def test_collection_items_are_paginated_using_total_record_count(self):
+        self.client._make_api_request = Mock(side_effect=[
+            {'Items': [{'Id': 'one'}], 'TotalRecordCount': 2},
+            {'Items': [{'Id': 'two'}], 'TotalRecordCount': 2},
+        ])
+
+        items = self.client.get_collection_items('collection')
+
+        self.assertEqual([item['Id'] for item in items], ['one', 'two'])
+        self.assertEqual(self.client._make_api_request.call_count, 2)
+
+    def test_episode_members_resolve_to_the_series_folder(self):
+        series_path = '/mnt/unionfs/television/00s/The Amazing Race (2001) {tvdb-77666}'
+        self.client._make_api_request = Mock(side_effect=[
+            {
+                'Items': [{'Id': 'episode-id', 'Type': 'Episode', 'SeriesId': 'series-id'}],
+                'TotalRecordCount': 1,
+            },
+            {'Id': 'series-id', 'Type': 'Series', 'Path': series_path},
+        ])
+
+        items = self.client.get_collection_items('collection-id')
+
+        self.assertEqual(items, [{'Id': 'series-id', 'Type': 'Series', 'Path': series_path}])
+
+    def test_existing_library_at_the_same_path_is_reused(self):
+        self.client._make_api_request = Mock(return_value=[{
+            'Name': 'Horror-library',
+            'ItemId': 'library-id',
+            'CollectionType': 'movies',
+            'Locations': ['/exports/Horror-library'],
+        }])
+        self.client.session.post = Mock()
+
+        result = self.client.ensure_library('Horror-library', '/exports/Horror-library', 'movies')
+
+        self.assertEqual(result, ('library-id', False))
+        self.client.session.post.assert_not_called()
+
+    def test_same_name_at_another_path_is_not_modified(self):
+        self.client._make_api_request = Mock(return_value=[{
+            'Name': 'Horror-library',
+            'ItemId': 'library-id',
+            'CollectionType': 'movies',
+            'Locations': ['/exports/old'],
+        }])
+        self.client.session.post = Mock()
+
+        result = self.client.ensure_library('Horror-library', '/exports/new', 'movies')
+
+        self.assertIsNone(result)
+        self.client.session.post.assert_not_called()
+
+    def test_new_library_creation_is_verified_before_return(self):
+        response = Mock(status_code=204)
+        self.client.session.post = Mock(return_value=response)
+        self.client._make_api_request = Mock(side_effect=[
+            [],
+            [{
+                'Name': 'Horror-library',
+                'ItemId': 'library-id',
+                'CollectionType': 'movies',
+                'Locations': ['/exports/Horror-library'],
+            }],
+        ])
+
+        result = self.client.ensure_library('Horror-library', '/exports/Horror-library', 'movies')
+
+        self.assertEqual(result, ('library-id', True))
+        self.client.session.post.assert_called_once()
+        self.assertEqual(
+            self.client.session.post.call_args.kwargs['json'],
+            {
+                'Name': 'Horror-library',
+                'CollectionType': 'movies',
+                'Paths': ['/exports/Horror-library'],
+                'RefreshLibrary': True,
+            },
+        )
+
+
+if __name__ == '__main__':
+    unittest.main()

@@ -1,0 +1,348 @@
+{% extends "base.html" %}
+{% block title %}Collections - Emby Collection Manager{% endblock %}
+{% block content %}
+<h1 style="margin-bottom:20px">Collection Recipes</h1>
+
+<div class="card">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:15px;flex-wrap:wrap;gap:10px">
+        <div>
+            <button class="btn btn-green btn-sm" onclick="toggleAll(true)">Enable All</button>
+            <button class="btn btn-secondary btn-sm" onclick="toggleAll(false)">Disable All</button>
+        </div>
+        <div id="duplicates-info" style="color:var(--text-dim);font-size:0.9rem"></div>
+    </div>
+
+    <!-- Search/filter -->
+    <div class="form-group" style="margin-bottom:15px">
+        <input type="text" id="recipe-search" placeholder="Search collections by name..." oninput="filterRecipes()" style="width:100%">
+    </div>
+
+    <div id="recipe-container">
+    {% for cat_id,cat in categories %}
+    <div class="category-header category-block" data-cat-name="{{ cat.name|lower }}">
+        <span>{{ cat.name }}</span>
+        <div>
+            <button class="btn btn-secondary btn-sm" onclick="toggleCategory({{ cat_id }},true)">Enable</button>
+            <button class="btn btn-secondary btn-sm" onclick="toggleCategory({{ cat_id }},false)">Disable</button>
+        </div>
+    </div>
+    <ul class="recipe-list category-block" data-cat-name="{{ cat.name|lower }}">
+        {% for recipe in cat.recipes %}
+        <li class="recipe-item recipe-row" data-recipe-name="{{ recipe.name|lower }}">
+            <div class="recipe-name" style="cursor:pointer" onclick="showDetail('{{ recipe.name|replace("'","\\'") }}')">
+                {{ recipe.name }}
+                <span class="recipe-cat">{{ recipe.source_type }}</span>
+            </div>
+            <div style="display:flex;align-items:center;gap:8px">
+                <button class="btn btn-secondary btn-sm" onclick="previewCollection('{{ recipe.name|replace("'","\\'") }}')">Preview</button>
+                <button class="btn btn-secondary btn-sm" onclick="syncSingle('{{ recipe.name|replace("'","\\'") }}')">Sync</button>
+                <button class="btn btn-secondary btn-sm" onclick="showDetail('{{ recipe.name|replace("'","\\'") }}')">Edit</button>
+                <button class="btn btn-secondary btn-sm" onclick="showDuplicate('{{ recipe.name|replace("'","\\'") }}')">Duplicate</button>
+                <label class="toggle">
+                    <input type="checkbox" {% if recipe.enabled %}checked{% endif %} onchange="toggleRecipe('{{ recipe.name|replace("'","\\'") }}',this.checked)">
+                    <span class="toggle-slider"></span>
+                </label>
+            </div>
+        </li>
+        {% endfor %}
+    </ul>
+    {% endfor %}
+    </div>
+</div>
+
+<!-- Detail/Edit Modal -->
+<div class="modal" id="detail-modal">
+    <div class="modal-content" style="max-width:750px;max-height:85vh;overflow-y:auto">
+        <h2 id="detail-title">Recipe Details</h2>
+        <div id="detail-body" style="margin:15px 0"></div>
+        <div id="detail-edit" style="display:none;margin-top:15px;border-top:1px solid var(--border);padding-top:15px">
+            <h3 style="margin-bottom:10px">Override Settings</h3>
+            <div class="form-row">
+                <div class="form-group">
+                    <label>Custom Collection Name (optional)</label>
+                    <input type="text" id="detail-custom-name" placeholder="e.g. Popular Movies - 4K Edition">
+                </div>
+                <div class="form-group">
+                    <label>Item Limit (0 = no limit)</label>
+                    <input type="number" id="detail-item-limit" placeholder="40" min="0">
+                </div>
+            </div>
+            <div class="form-group">
+                <label>Target Libraries (empty = use global setting)</label>
+                <div id="detail-libraries" style="max-height:200px;overflow-y:auto;border:1px solid var(--border);border-radius:4px;padding:10px"></div>
+            </div>
+            <div class="form-group">
+                <label><input type="checkbox" id="detail-create-library"> Export this collection as a symlink library</label>
+                <small style="color:var(--text-dim)">Updated after the collection sync. Automatic Emby library creation is controlled in Settings.</small>
+            </div>
+            <div class="form-group">
+                <label>Extra MDBList URLs (one per line - merged into this collection)</label>
+                <textarea id="detail-mdblist-urls" rows="3" style="font-family:monospace;font-size:0.85rem" placeholder="https://mdblist.com/lists/user/list-name"></textarea>
+            </div>
+            <div class="form-group">
+                <label>Extra Trakt URLs (one per line - merged into this collection)</label>
+                <textarea id="detail-trakt-urls" rows="3" style="font-family:monospace;font-size:0.85rem" placeholder="https://trakt.tv/users/username/lists/list-name"></textarea>
+            </div>
+            <div class="form-group">
+                <label>Extra TMDb IDs (comma-separated)</label>
+                <input type="text" id="detail-tmdb-ids" placeholder="12345, 67890, 11111">
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label>Custom Poster URL (optional)</label>
+                    <input type="text" id="detail-poster-url" placeholder="https://image.tmdb.org/...">
+                </div>
+                <div class="form-group">
+                    <label>Custom Backdrop URL (optional)</label>
+                    <input type="text" id="detail-backdrop-url" placeholder="https://image.tmdb.org/...">
+                </div>
+            </div>
+            <div style="display:flex;gap:10px;margin-top:10px">
+                <button class="btn btn-primary" onclick="saveOverride()">Save Override</button>
+                <button class="btn btn-secondary" onclick="deleteOverride()" style="color:var(--red)">Remove Override</button>
+            </div>
+        </div>
+        <div style="display:flex;justify-content:flex-end;margin-top:15px">
+            <button class="btn btn-secondary" onclick="closeDetail()">Close</button>
+        </div>
+    </div>
+</div>
+
+<!-- Duplicate Modal -->
+<div class="modal" id="dup-modal">
+    <div class="modal-content" style="max-width:600px;max-height:85vh;overflow-y:auto">
+        <h2>Duplicate Recipe</h2>
+        <p style="color:var(--text-dim);margin-bottom:15px;font-size:0.9rem">
+            Create a copy with a different name and/or library target.
+        </p>
+        <div class="form-group"><label>Original Recipe</label><input type="text" id="dup-original" readonly></div>
+        <div class="form-group"><label>New Collection Name</label><input type="text" id="dup-new-name" placeholder="Popular Movies on TMDb - 4K"></div>
+        <div class="form-group"><label>Target Libraries (empty = global)</label><div id="dup-libraries" style="max-height:200px;overflow-y:auto;border:1px solid var(--border);border-radius:4px;padding:10px"></div></div>
+        <div class="form-group"><label><input type="checkbox" id="dup-create-library"> Export as a symlink library</label></div>
+        <div class="form-group"><label>Extra MDBList URLs (one per line)</label><textarea id="dup-mdblist-urls" rows="3" style="font-family:monospace;font-size:0.85rem" placeholder="https://mdblist.com/lists/user/list-name"></textarea></div>
+        <div class="form-group"><label>Extra TMDb IDs (comma-separated)</label><input type="text" id="dup-tmdb-ids" placeholder="12345, 67890"></div>
+        <div style="display:flex;gap:10px;margin-top:10px">
+            <button class="btn btn-primary" onclick="createDuplicate()">Create Duplicate</button>
+            <button class="btn btn-secondary" onclick="closeDup()">Cancel</button>
+        </div>
+    </div>
+</div>
+
+<!-- Duplicates list -->
+<div class="modal" id="dup-list-modal">
+    <div class="modal-content" style="max-width:600px;max-height:85vh;overflow-y:auto">
+        <h2>Duplicate Collections</h2>
+        <div id="dup-list-body" style="margin:15px 0"></div>
+        <div style="display:flex;justify-content:flex-end"><button class="btn btn-secondary" onclick="document.getElementById('dup-list-modal').classList.remove('active')">Close</button></div>
+    </div>
+</div>
+
+<!-- Preview Modal -->
+<div class="modal" id="preview-modal">
+    <div class="modal-content" style="max-width:700px;max-height:85vh;overflow-y:auto">
+        <h2 id="preview-title">Collection Preview</h2>
+        <div id="preview-body" style="margin:15px 0"></div>
+        <div style="display:flex;justify-content:flex-end"><button class="btn btn-secondary" onclick="document.getElementById('preview-modal').classList.remove('active')">Close</button></div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let availableLibs = [];
+let currentRecipeName = null;
+
+async function loadLibs() {
+    try { const res = await fetch('/api/list_libraries'); availableLibs = await res.json(); } catch(e) { availableLibs = []; }
+}
+loadLibs();
+
+function libCheckboxes(containerId, selected) {
+    const c = document.getElementById(containerId);
+    if (availableLibs.length === 0) { c.innerHTML = '<p style="color:var(--text-dim)">No libraries found.</p>'; return; }
+    c.innerHTML = availableLibs.map(lib => `<div class="lib-item"><div class="lib-info"><div class="lib-name">${lib.Name}</div><div class="lib-type">${lib.CollectionType||'mixed'} - ${lib.Id}</div></div><input type="checkbox" class="checkbox" value="${lib.Id}" ${selected.includes(lib.Id)?'checked':''}></div>`).join('');
+}
+function getCheckedLibs(containerId) {
+    return Array.from(document.querySelectorAll(`#${containerId} input[type=checkbox]:checked`)).map(cb => cb.value);
+}
+
+// Search/filter
+function filterRecipes() {
+    const q = document.getElementById('recipe-search').value.toLowerCase().trim();
+    document.querySelectorAll('.recipe-row').forEach(row => {
+        const name = row.getAttribute('data-recipe-name');
+        row.style.display = (!q || name.includes(q)) ? '' : 'none';
+    });
+    // Hide empty categories
+    document.querySelectorAll('.category-block').forEach(block => {
+        if (block.tagName === 'UL') {
+            const visible = block.querySelectorAll('.recipe-row:not([style*="none"])').length;
+            block.style.display = visible > 0 ? '' : 'none';
+        } else {
+            const next = block.nextElementSibling;
+            if (next && next.tagName === 'UL') {
+                const visible = next.querySelectorAll('.recipe-row:not([style*="none"])').length;
+                block.style.display = visible > 0 ? '' : 'none';
+            }
+        }
+    });
+}
+
+async function showDetail(name) {
+    currentRecipeName = name;
+    document.getElementById('detail-title').textContent = name;
+    document.getElementById('detail-body').innerHTML = '<p style="color:var(--text-dim)">Loading...</p>';
+    document.getElementById('detail-edit').style.display = 'none';
+    document.getElementById('detail-modal').classList.add('active');
+    try {
+        const res = await fetch('/api/recipe_detail/' + encodeURIComponent(name));
+        const data = await res.json();
+        if (data.error) { document.getElementById('detail-body').innerHTML = '<p style="color:var(--red)">'+data.error+'</p>'; return; }
+        let html = '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:15px">';
+        html += `<div><strong>Source:</strong> ${data.source_type}</div>`;
+        html += `<div><strong>Category:</strong> ${data.category_name}</div>`;
+        if (data.item_limit) html += `<div><strong>Item Limit:</strong> ${data.item_limit}</div>`;
+        if (data.tmdb_collection_id) html += `<div><strong>TMDb Collection ID:</strong> ${data.tmdb_collection_id}</div>`;
+        html += '</div>';
+        if (data.tmdb_discover_params) html += '<div class="form-group"><label>TMDb Discover Parameters</label><pre style="background:var(--bg);padding:10px;border-radius:4px;font-size:0.85rem;overflow-x:auto">'+JSON.stringify(data.tmdb_discover_params,null,2)+'</pre></div>';
+        if (data.trakt_list_params) html += '<div class="form-group"><label>Trakt List Parameters</label><pre style="background:var(--bg);padding:10px;border-radius:4px;font-size:0.85rem;overflow-x:auto">'+JSON.stringify(data.trakt_list_params,null,2)+'</pre></div>';
+        const ov = data.override || {};
+        if (Object.keys(ov).length > 0) html += '<div class="alert alert-info" style="margin-top:10px">This recipe has overrides applied.</div>';
+        document.getElementById('detail-body').innerHTML = html;
+        document.getElementById('detail-edit').style.display = 'block';
+        libCheckboxes('detail-libraries', ov.library_ids || []);
+        document.getElementById('detail-create-library').checked = !!ov.create_library;
+        document.getElementById('detail-custom-name').value = ov.custom_name || '';
+        document.getElementById('detail-item-limit').value = ov.item_limit || '';
+        document.getElementById('detail-mdblist-urls').value = (ov.extra_mdblist_urls || []).join('\n');
+        document.getElementById('detail-trakt-urls').value = (ov.extra_trakt_urls || []).join('\n');
+        document.getElementById('detail-tmdb-ids').value = (ov.extra_tmdb_ids || []).join(', ');
+        document.getElementById('detail-poster-url').value = ov.custom_poster_url || '';
+        document.getElementById('detail-backdrop-url').value = ov.custom_backdrop_url || '';
+    } catch(e) { document.getElementById('detail-body').innerHTML = '<p style="color:var(--red)">Error: '+e+'</p>'; }
+}
+function closeDetail() { document.getElementById('detail-modal').classList.remove('active'); currentRecipeName = null; }
+
+async function saveOverride() {
+    if (!currentRecipeName) return;
+    const itemLimitVal = document.getElementById('detail-item-limit').value.trim();
+    const override = {
+        custom_name: document.getElementById('detail-custom-name').value.trim() || null,
+        item_limit: itemLimitVal ? parseInt(itemLimitVal) : null,
+        library_ids: getCheckedLibs('detail-libraries'),
+        extra_mdblist_urls: document.getElementById('detail-mdblist-urls').value.split('\n').map(s=>s.trim()).filter(s=>s),
+        extra_trakt_urls: document.getElementById('detail-trakt-urls').value.split('\n').map(s=>s.trim()).filter(s=>s),
+        extra_tmdb_ids: document.getElementById('detail-tmdb-ids').value.split(',').map(s=>parseInt(s.trim())).filter(n=>!isNaN(n)),
+        custom_poster_url: document.getElementById('detail-poster-url').value.trim() || null,
+        custom_backdrop_url: document.getElementById('detail-backdrop-url').value.trim() || null,
+        create_library: document.getElementById('detail-create-library').checked,
+    };
+    try {
+        const res = await fetch('/api/recipe_override', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({recipe_name:currentRecipeName,override})});
+        const data = await res.json();
+        if (data.success) { closeDetail(); location.reload(); } else { alert(data.error||'Failed'); }
+    } catch(e) { alert('Error: '+e); }
+}
+
+async function deleteOverride() {
+    if (!currentRecipeName || !confirm('Remove all overrides?')) return;
+    try {
+        const res = await fetch('/api/recipe_override_delete', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({recipe_name:currentRecipeName})});
+        const data = await res.json();
+        if (data.success) { closeDetail(); location.reload(); } else { alert(data.error||'Failed'); }
+    } catch(e) { alert('Error: '+e); }
+}
+
+function showDuplicate(name) {
+    document.getElementById('dup-original').value = name;
+    document.getElementById('dup-new-name').value = name + ' - Copy';
+    document.getElementById('dup-mdblist-urls').value = '';
+    document.getElementById('dup-tmdb-ids').value = '';
+    document.getElementById('dup-create-library').checked = false;
+    libCheckboxes('dup-libraries', []);
+    document.getElementById('dup-modal').classList.add('active');
+}
+function closeDup() { document.getElementById('dup-modal').classList.remove('active'); }
+
+async function createDuplicate() {
+    const original = document.getElementById('dup-original').value;
+    const newName = document.getElementById('dup-new-name').value;
+    if (!newName) { alert('Enter a name'); return; }
+    const dup = {
+        original_name: original, new_name: newName,
+        library_ids: getCheckedLibs('dup-libraries'),
+        extra_mdblist_urls: document.getElementById('dup-mdblist-urls').value.split('\n').map(s=>s.trim()).filter(s=>s),
+        extra_tmdb_ids: document.getElementById('dup-tmdb-ids').value.split(',').map(s=>parseInt(s.trim())).filter(n=>!isNaN(n)),
+        create_library: document.getElementById('dup-create-library').checked,
+    };
+    try {
+        const res = await fetch('/api/recipe_duplicate', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(dup)});
+        const data = await res.json();
+        if (data.success) { closeDup(); location.reload(); } else { alert(data.error||'Failed'); }
+    } catch(e) { alert('Error: '+e); }
+}
+
+async function loadDuplicates() {
+    try {
+        const res = await fetch('/api/recipe_duplicates');
+        const dups = await res.json();
+        if (dups.length > 0) document.getElementById('duplicates-info').innerHTML = `<a href="#" onclick="showDupList();return false" style="color:var(--accent)">${dups.length} duplicate(s) active</a>`;
+    } catch(e) {}
+}
+loadDuplicates();
+
+async function showDupList() {
+    try {
+        const res = await fetch('/api/recipe_duplicates');
+        const dups = await res.json();
+        const body = document.getElementById('dup-list-body');
+        if (dups.length === 0) { body.innerHTML = '<p style="color:var(--text-dim)">No duplicates.</p>'; }
+        else {
+            body.innerHTML = dups.map((d,i) => `<div class="file-item"><div class="file-item-header"><span><strong>${d.new_name}</strong><br><span style="color:var(--text-dim);font-size:0.85rem">Based on: ${d.original_name}</span></span><button class="btn btn-secondary btn-sm" onclick="deleteDup(${i})" style="color:var(--red)">Delete</button></div>${d.library_ids&&d.library_ids.length?`<div style="font-size:0.8rem;color:var(--text-dim)">Libraries: ${d.library_ids.join(', ')}</div>`:''}</div>`).join('');
+        }
+        document.getElementById('dup-list-modal').classList.add('active');
+    } catch(e) {}
+}
+
+async function deleteDup(idx) {
+    if (!confirm('Delete this duplicate?')) return;
+    try {
+        const res = await fetch('/api/recipe_duplicate_delete', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({index:idx})});
+        const data = await res.json();
+        if (data.success) { showDupList(); location.reload(); } else { alert(data.error||'Failed'); }
+    } catch(e) { alert('Error: '+e); }
+}
+
+// Single recipe sync
+async function syncSingle(name) {
+    if (!confirm(`Sync only "${name}" now?`)) return;
+    try {
+        const res = await fetch('/api/sync_single', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({recipe_name:name})});
+        const data = await res.json();
+        if (data.success) { alert('Sync started for: ' + name); }
+        else { alert(data.error || 'Failed to start'); }
+    } catch(e) { alert('Error: '+e); }
+}
+
+// Preview collection
+async function previewCollection(name) {
+    document.getElementById('preview-title').textContent = 'Preview: ' + name;
+    document.getElementById('preview-body').innerHTML = '<p style="color:var(--text-dim)">Loading preview...</p>';
+    document.getElementById('preview-modal').classList.add('active');
+    try {
+        const res = await fetch('/api/preview_collection/' + encodeURIComponent(name));
+        const data = await res.json();
+        if (data.error) { document.getElementById('preview-body').innerHTML = '<div class="alert alert-error">'+data.error+'</div>'; return; }
+        let html = `<p style="margin-bottom:10px"><strong>${data.total}</strong> movies would be added (showing first ${data.movies.length})</p>`;
+        html += '<div style="max-height:400px;overflow-y:auto"><table style="width:100%;font-size:0.85rem"><thead><tr><th style="text-align:left;padding:5px">TMDb ID</th><th style="text-align:left;padding:5px">Title</th><th style="text-align:left;padding:5px">Year</th></tr></thead><tbody>';
+        data.movies.forEach(m => { html += `<tr><td style="padding:5px">${m.id}</td><td style="padding:5px">${m.title}</td><td style="padding:5px">${m.year}</td></tr>`; });
+        html += '</tbody></table></div>';
+        document.getElementById('preview-body').innerHTML = html;
+    } catch(e) { document.getElementById('preview-body').innerHTML = '<p style="color:var(--red)">Error: '+e+'</p>'; }
+}
+
+async function toggleRecipe(n, e) { await fetch('/api/toggle_recipe', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:n,enabled:e})}); }
+async function toggleAll(en) { await fetch('/api/toggle_all', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({enable:en})}); location.reload(); }
+async function toggleCategory(c, e) { await fetch('/api/toggle_category', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({category_id:c,enabled:e})}); location.reload(); }
+</script>
+{% endblock %}

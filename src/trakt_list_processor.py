@@ -1,0 +1,370 @@
+"""
+Trakt List Processor for Emby Collection Manager
+
+This module processes user-created text files in the traktlists directory
+and converts them into collections with TMDb movie IDs.
+"""
+
+import os
+import re
+import logging
+import yaml
+from typing import List, Dict, Any, Set, Optional
+from pathlib import Path
+
+logger = logging.getLogger(__name__)
+
+class TraktListProcessor:
+    """
+    Processes text files containing Trakt lists, TMDb IDs, and movie titles
+    to create collections for media servers.
+    """
+    
+    def __init__(self, tmdb_client, trakt_client=None, config=None):
+        """
+        Initialize the processor with required clients.
+        
+        Args:
+            tmdb_client: TMDb client for movie lookups
+            trakt_client: Optional Trakt client for list processing
+            config: Configuration dictionary
+        """
+        self.tmdb_client = tmdb_client
+        self.trakt_client = trakt_client
+        self.config = config or {}
+        
+        # Configuration options
+        traktlists_config = self.config.get('traktlists', {})
+        self.enabled = traktlists_config.get('enabled', True)
+        self.directory = traktlists_config.get('directory', 'traktlists')
+        self.max_items = traktlists_config.get('max_items_per_collection', 0)
+        
+    def is_enabled(self) -> bool:
+        """Check if Trakt list processing is enabled."""
+        return self.enabled
+    
+    def get_traktlists_directory(self) -> Path:
+        """Get the path to the traktlists directory."""
+        return Path(self.directory)
+    
+    def scan_traktlists_directory(self) -> List[Dict[str, Any]]:
+        """
+        Scan the traktlists directory for .txt files and process them.
+        
+        Returns:
+            List of collection dictionaries ready for processing
+        """
+        if not self.is_enabled():
+            logger.info("Trakt lists processing is disabled")
+            return []
+            
+        traktlists_dir = self.get_traktlists_directory()
+        
+        if not traktlists_dir.exists():
+            logger.info(f"Trakt lists directory '{traktlists_dir}' does not exist")
+            return []
+            
+        logger.info(f"Scanning Trakt lists directory: {traktlists_dir}")
+        collections = []
+        
+        # Find all .txt and .yaml/.yml files in the directory
+        list_files = list(traktlists_dir.glob("*.txt")) + list(traktlists_dir.glob("*.yaml")) + list(traktlists_dir.glob("*.yml"))
+        
+        if not list_files:
+            logger.info("No list files found in traktlists directory")
+            return []
+            
+        logger.info(f"Found {len(list_files)} Trakt list files to process")
+        
+        for list_file in list_files:
+            try:
+                collection = self.process_traktlist_file(list_file)
+                if collection:
+                    collections.append(collection)
+            except Exception as e:
+                logger.error(f"Error processing file '{list_file.name}': {e}")
+                
+        return collections
+    
+    def process_traktlist_file(self, file_path: Path) -> Dict[str, Any]:
+        """
+        Process a single traktlist file and extract movie IDs.
+        Supports .txt (one item per line) and .yaml/.yml (structured) formats.
+        
+        YAML format supports:
+          - collection_name: "Custom Name"  # overrides filename
+          - library_ids: ["lib1", "lib2"]   # per-collection library selection
+          - category_id: 12                  # custom category for poster template
+          - poster_url: "https://..."        # custom poster URL
+          - backdrop_url: "https://..."      # custom backdrop URL
+          - items:                           # list of items
+              - https://trakt.tv/users/...   # Trakt URLs
+              - 12345                        # TMDb IDs
+              - "Movie Title"                # movie titles
+        
+        Args:
+            file_path: Path to the .txt or .yaml file
+            
+        Returns:
+            Dictionary containing collection info and TMDb IDs
+        """
+        collection_name = file_path.stem  # Filename without extension
+        custom_name = None
+        library_ids = None
+        category_id = 12  # Default Trakt category
+        poster_url = None
+        backdrop_url = None
+        
+        is_yaml = file_path.suffix in ('.yaml', '.yml')
+        
+        logger.info(f"Processing Trakt list file: {file_path.name} -> Collection: '{collection_name}'")
+        
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+        except Exception as e:
+            logger.error(f"Failed to read file '{file_path}': {e}")
+            return None
+        
+        if is_yaml:
+            try:
+                yaml_data = yaml.safe_load(content)
+                if isinstance(yaml_data, dict):
+                    custom_name = yaml_data.get('collection_name')
+                    library_ids = yaml_data.get('library_ids')
+                    cat = yaml_data.get('category_id')
+                    if cat is not None:
+                        category_id = cat
+                    poster_url = yaml_data.get('poster_url')
+                    backdrop_url = yaml_data.get('backdrop_url')
+                    items = yaml_data.get('items', [])
+                    # Convert items to text format for processing
+                    content = '\n'.join(str(i) for i in items) if items else ''
+                elif isinstance(yaml_data, list):
+                    # Simple list of items
+                    content = '\n'.join(str(i) for i in yaml_data)
+            except yaml.YAMLError as e:
+                logger.warning(f"Failed to parse YAML in '{file_path.name}', treating as text: {e}")
+        elif content.strip().startswith('---'):
+            # YAML frontmatter in a .txt file
+            try:
+                if '\n---\n' in content:
+                    frontmatter, content = content.split('\n---\n', 1)
+                    frontmatter = frontmatter.strip().lstrip('-').strip()
+                    yaml_data = yaml.safe_load(frontmatter)
+                    if isinstance(yaml_data, dict):
+                        custom_name = yaml_data.get('collection_name')
+                        library_ids = yaml_data.get('library_ids')
+                        cat = yaml_data.get('category_id')
+                        if cat is not None:
+                            category_id = cat
+                        poster_url = yaml_data.get('poster_url')
+                        backdrop_url = yaml_data.get('backdrop_url')
+            except yaml.YAMLError:
+                pass  # Treat as plain text
+        
+        if custom_name:
+            collection_name = custom_name
+            logger.info(f"Using custom collection name: '{collection_name}'")
+        
+        tmdb_ids = self.extract_tmdb_ids_from_content(content, collection_name)
+        
+        if not tmdb_ids:
+            logger.warning(f"No valid movies found in '{file_path.name}'")
+            
+        # Apply max items limit
+        if self.max_items and len(tmdb_ids) > self.max_items:
+            logger.info(f"Limiting collection '{collection_name}' to {self.max_items} items (was {len(tmdb_ids)})")
+            tmdb_ids = tmdb_ids[:self.max_items]
+            
+        logger.info(f"Found {len(tmdb_ids)} movies for collection '{collection_name}'")
+        
+        return {
+            'name': collection_name,
+            'source_type': 'traktlist_file',
+            'tmdb_ids': tmdb_ids,
+            'target_servers': ['emby'],
+            'category_id': category_id,
+            'file_path': str(file_path),
+            'library_ids': library_ids,
+            'poster_url': poster_url,
+            'backdrop_url': backdrop_url
+        }
+    
+    def extract_tmdb_ids_from_content(self, content: str, collection_name: str) -> List[int]:
+        """
+        Extract TMDb IDs from file content supporting multiple formats.
+        
+        Args:
+            content: File content as string
+            collection_name: Name for logging purposes
+            
+        Returns:
+            List of TMDb movie IDs
+        """
+        lines = content.strip().split('\n')
+        tmdb_ids = []
+        seen_ids = set()  # Prevent duplicates
+        
+        for line_num, line in enumerate(lines, 1):
+            line = line.strip()
+            
+            # Skip empty lines and comments
+            if not line or line.startswith('#'):
+                continue
+                
+            try:
+                # Try to extract TMDb IDs from this line
+                extracted_ids = self.parse_line(line, collection_name, line_num)
+                
+                # Add unique IDs only
+                for tmdb_id in extracted_ids:
+                    if tmdb_id not in seen_ids:
+                        tmdb_ids.append(tmdb_id)
+                        seen_ids.add(tmdb_id)
+                        
+            except Exception as e:
+                logger.warning(f"Error processing line {line_num} in '{collection_name}': {line[:50]}... - {e}")
+                
+        return tmdb_ids
+    
+    def parse_line(self, line: str, collection_name: str, line_num: int) -> List[int]:
+        """
+        Parse a single line and extract TMDb IDs.
+        
+        Args:
+            line: Line content
+            collection_name: Collection name for logging
+            line_num: Line number for logging
+            
+        Returns:
+            List of TMDb IDs found on this line
+        """
+        # Remove inline comments
+        if '#' in line:
+            line = line.split('#')[0].strip()
+            
+        if not line:
+            return []
+            
+        # 1. Check for Trakt list URL - support both formats
+        # Format 1: https://trakt.tv/users/USERNAME/lists/LISTNAME
+        trakt_url_match = re.match(r'https://trakt\.tv/users/([^/]+)/lists/([^/?]+)', line)
+        if trakt_url_match:
+            return self.process_trakt_list_url(trakt_url_match.group(1), trakt_url_match.group(2), collection_name)
+        
+        # Format 2: https://trakt.tv/lists/LISTID (public lists)
+        trakt_public_url_match = re.match(r'https://trakt\.tv/lists/([^/?]+)', line)
+        if trakt_public_url_match:
+            return self.process_trakt_public_list_url(trakt_public_url_match.group(1), collection_name)
+            
+        # 2. Check for direct TMDb ID (just a number)
+        if line.isdigit():
+            tmdb_id = int(line)
+            if self.validate_tmdb_id(tmdb_id):
+                return [tmdb_id]
+            else:
+                logger.warning(f"Invalid TMDb ID {tmdb_id} in '{collection_name}' line {line_num}")
+                return []
+                
+        # 3. Treat as movie title - search TMDb
+        return self.search_movie_by_title(line, collection_name, line_num)
+    
+    def process_trakt_list_url(self, username: str, list_slug: str, collection_name: str) -> List[int]:
+        """
+        Process a Trakt list URL and extract TMDb IDs.
+        
+        Args:
+            username: Trakt username
+            list_slug: Trakt list slug
+            collection_name: Collection name for logging
+            
+        Returns:
+            List of TMDb IDs from the Trakt list
+        """
+        if not self.trakt_client:
+            logger.error(f"Trakt client not available for processing URL in '{collection_name}'")
+            return []
+            
+        try:
+            logger.info(f"Fetching Trakt list: {username}/{list_slug}")
+            trakt_items = self.trakt_client.get_list_items(username, list_slug, 'movies')
+            tmdb_ids = self.trakt_client.extract_tmdb_ids(trakt_items, 'movie')
+            logger.info(f"Found {len(tmdb_ids)} movies from Trakt list {username}/{list_slug}")
+            return tmdb_ids
+        except Exception as e:
+            logger.error(f"Failed to process Trakt list {username}/{list_slug}: {e}")
+            return []
+    
+    def process_trakt_public_list_url(self, list_id: str, collection_name: str) -> List[int]:
+        """
+        Process a public Trakt list URL and extract TMDb IDs.
+        
+        Args:
+            list_id: Trakt public list ID
+            collection_name: Collection name for logging
+            
+        Returns:
+            List of TMDb IDs from the Trakt list
+        """
+        if not self.trakt_client:
+            logger.error(f"Trakt client not available for processing URL in '{collection_name}'")
+            return []
+            
+        try:
+            logger.info(f"Fetching public Trakt list: {list_id}")
+            trakt_items = self.trakt_client.get_public_list_items(list_id, 'movies')
+            tmdb_ids = self.trakt_client.extract_tmdb_ids(trakt_items, 'movie')
+            logger.info(f"Found {len(tmdb_ids)} movies from public Trakt list {list_id}")
+            return tmdb_ids
+        except Exception as e:
+            logger.error(f"Failed to process public Trakt list {list_id}: {e}")
+            return []
+    
+    def search_movie_by_title(self, title: str, collection_name: str, line_num: int) -> List[int]:
+        """
+        Search for a movie by title using TMDb.
+        
+        Args:
+            title: Movie title to search
+            collection_name: Collection name for logging
+            line_num: Line number for logging
+            
+        Returns:
+            List containing the TMDb ID if found, empty list otherwise
+        """
+        try:
+            logger.debug(f"Searching TMDb for movie title: '{title}'")
+            search_results = self.tmdb_client.search_movies(title)
+            
+            if search_results and len(search_results) > 0:
+                # Take the first (most relevant) result
+                movie = search_results[0]
+                tmdb_id = movie['id']
+                movie_title = movie.get('title', 'Unknown')
+                year = movie.get('release_date', '')[:4] if movie.get('release_date') else ''
+                logger.info(f"Found movie: '{title}' -> '{movie_title}' ({year}) [TMDb ID: {tmdb_id}]")
+                return [tmdb_id]
+            else:
+                logger.warning(f"No TMDb results found for title: '{title}' in '{collection_name}' line {line_num}")
+                return []
+                
+        except Exception as e:
+            logger.error(f"Error searching for movie '{title}': {e}")
+            return []
+    
+    def validate_tmdb_id(self, tmdb_id: int) -> bool:
+        """
+        Validate that a TMDb ID exists by checking the movie details.
+        
+        Args:
+            tmdb_id: TMDb movie ID
+            
+        Returns:
+            True if the ID is valid, False otherwise
+        """
+        try:
+            movie_details = self.tmdb_client.get_movie_details(tmdb_id)
+            return movie_details is not None
+        except Exception:
+            return False

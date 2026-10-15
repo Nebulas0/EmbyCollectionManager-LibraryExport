@@ -1,0 +1,206 @@
+{% extends "base.html" %}
+{% block title %}Trakt Lists - Emby Collection Manager{% endblock %}
+{% block content %}
+<h1 style="margin-bottom:20px">Trakt Lists</h1>
+<div class="card">
+    <p style="margin-bottom:15px;color:var(--text-dim)">
+        Trakt list files in <code>{{ directory }}/</code>. Supports .txt (one item per line) and .yaml format.
+        YAML format allows per-collection library selection, custom names, and multiple URLs per collection.
+    </p>
+    <button class="btn btn-primary" onclick="showNew('txt')">+ New .txt List</button>
+    <button class="btn btn-primary" onclick="showNew('yaml')">+ New .yaml List</button>
+</div>
+
+{% if files %}
+<div class="card">
+    <h2>Existing Lists ({{ files|length }})</h2>
+    <ul class="file-list">
+        {% for file in files %}
+        <li class="file-item">
+            <div class="file-item-header">
+                <span class="file-item-name">{{ file.name }}</span>
+                <div>
+                    <button class="btn btn-secondary btn-sm" onclick="editFile('{{ file.name }}',{{ loop.index0 }})">Edit</button>
+                    <button class="btn btn-secondary btn-sm" onclick="showLibSelect('{{ file.name }}')">Libraries</button>
+                    <button class="btn btn-secondary btn-sm" onclick="deleteFile('{{ file.name }}')" style="color:var(--red)">Delete</button>
+                </div>
+            </div>
+            <div class="file-content" id="content-{{ loop.index0 }}">{{ file.content }}</div>
+            <div id="libs-{{ file.name|replace('.','_')|replace(' ','_') }}" style="margin-top:8px"></div>
+        </li>
+        {% endfor %}
+    </ul>
+</div>
+{% else %}
+<div class="card"><p style="color:var(--text-dim)">No Trakt list files found. Create one to get started.</p></div>
+{% endif %}
+
+<!-- File editor modal -->
+<div class="modal" id="file-modal">
+    <div class="modal-content">
+        <h2 id="modal-title">New Trakt List</h2>
+        <div class="form-group">
+            <label>Filename</label>
+            <input type="text" id="file-name" placeholder="My Collection.txt">
+        </div>
+        <div class="form-group">
+            <label>Content</label>
+            <textarea id="file-content" rows="12" style="font-family:monospace;font-size:0.85rem" placeholder="Plain .txt: one URL/ID/title per line&#10;&#10;YAML format:&#10;collection_name: My Custom Name&#10;library_ids:&#10;  - lib_id_1&#10;  - lib_id_2&#10;items:&#10;  - https://trakt.tv/users/username/lists/list-name&#10;  - 12345&#10;  - Movie Title"></textarea>
+        </div>
+        <div class="form-group">
+            <label><input type="checkbox" id="create-library"> Export this list as a symlink library</label>
+            <small style="color:var(--text-dim)">Updated after the collection sync. Automatic Emby library creation is controlled in Settings.</small>
+        </div>
+        <div style="display:flex;gap:10px;justify-content:flex-end">
+            <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+            <button class="btn btn-primary" onclick="saveFile()">Save</button>
+        </div>
+    </div>
+</div>
+
+<!-- Library selection modal -->
+<div class="modal" id="lib-modal">
+    <div class="modal-content">
+        <h2 id="lib-title">Select Libraries</h2>
+        <p style="color:var(--text-dim);margin-bottom:15px;font-size:0.9rem">
+            Choose which Emby libraries to scan for this collection. If none selected, uses global setting.
+        </p>
+        <div id="lib-list"></div>
+        <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:15px">
+            <button class="btn btn-secondary" onclick="closeLibModal()">Cancel</button>
+            <button class="btn btn-primary" onclick="saveLibs()">Save</button>
+        </div>
+    </div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+let currentLibFile = null;
+let availableLibs = [];
+
+async function loadLibs() {
+    try {
+        const res = await fetch('/api/list_libraries');
+        availableLibs = await res.json();
+    } catch(e) { availableLibs = []; }
+}
+loadLibs();
+
+function showNew(format) {
+    const ext = format === 'yaml' ? '.yaml' : '.txt';
+    document.getElementById('modal-title').textContent = 'New ' + (format === 'yaml' ? 'YAML' : 'Text') + ' List';
+    document.getElementById('file-name').value = 'My Collection' + ext;
+    document.getElementById('file-content').value = format === 'yaml' ? 
+        'collection_name: My Collection\nlibrary_ids: []\nitems:\n  - https://trakt.tv/users/username/lists/list-name\n  - 12345\n' :
+        '# One item per line: Trakt URL, TMDb ID, or movie title\nhttps://trakt.tv/users/username/lists/list-name\n12345\nThe Dark Knight\n';
+    document.getElementById('create-library').checked = false;
+    document.getElementById('file-name').disabled = false;
+    document.getElementById('file-modal').classList.add('active');
+}
+
+async function editFile(name, index) {
+    const content = document.getElementById('content-' + index).textContent;
+    document.getElementById('modal-title').textContent = 'Edit: ' + name;
+    document.getElementById('file-name').value = name;
+    document.getElementById('file-name').disabled = true;
+    document.getElementById('file-content').value = content;
+    document.getElementById('create-library').checked = false;
+    try {
+        const res = await fetch('/api/list_config?type=traktlists');
+        const configs = await res.json();
+        document.getElementById('create-library').checked = !!(configs[name] && configs[name].create_library);
+    } catch(e) {}
+    document.getElementById('file-modal').classList.add('active');
+}
+
+function closeModal() { document.getElementById('file-modal').classList.remove('active'); }
+
+async function saveFile() {
+    const name = document.getElementById('file-name').value;
+    const content = document.getElementById('file-content').value;
+    if (!name) { alert('Enter filename'); return; }
+    try {
+        const res = await fetch('/traktlists/save', {
+            method: 'POST', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({name, content})
+        });
+        const data = await res.json();
+        if (!data.success) { alert(data.error || 'Failed'); return; }
+        const configRes = await fetch('/api/list_config', {
+            method: 'POST', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({type: 'traktlists', filename: name, config: {create_library: document.getElementById('create-library').checked}})
+        });
+        const configData = await configRes.json();
+        if (configData.success) location.reload();
+        else alert('List saved, but library setting was not saved: ' + (configData.error || 'Failed'));
+    } catch(e) { alert('Error: ' + e); }
+}
+
+async function deleteFile(name) {
+    if (!confirm('Delete ' + name + '?')) return;
+    try {
+        const res = await fetch('/traktlists/delete', {
+            method: 'POST', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({name})
+        });
+        const data = await res.json();
+        if (data.success) location.reload();
+        else alert(data.error || 'Failed');
+    } catch(e) { alert('Error: ' + e); }
+}
+
+// Per-collection library selection
+async function showLibSelect(filename) {
+    currentLibFile = filename;
+    document.getElementById('lib-title').textContent = 'Libraries for: ' + filename;
+    // Load current config
+    let currentLibs = [];
+    try {
+        const res = await fetch('/api/list_config?type=traktlists');
+        const configs = await res.json();
+        if (configs[filename] && configs[filename].library_ids) {
+            currentLibs = configs[filename].library_ids;
+        }
+    } catch(e) {}
+    // Render checkboxes
+    const list = document.getElementById('lib-list');
+    if (availableLibs.length === 0) {
+        list.innerHTML = '<p style="color:var(--text-dim)">No libraries found. Configure Emby in Settings first.</p>';
+    } else {
+        list.innerHTML = availableLibs.map(lib => `
+            <div class="lib-item">
+                <div class="lib-info">
+                    <div class="lib-name">${lib.Name}</div>
+                    <div class="lib-type">${lib.CollectionType || 'mixed'} - ID: ${lib.Id}</div>
+                </div>
+                <input type="checkbox" class="checkbox" value="${lib.Id}" ${currentLibs.includes(lib.Id) ? 'checked' : ''} data-lib-id="${lib.Id}">
+            </div>
+        `).join('');
+    }
+    document.getElementById('lib-modal').classList.add('active');
+}
+
+function closeLibModal() {
+    document.getElementById('lib-modal').classList.remove('active');
+    currentLibFile = null;
+}
+
+async function saveLibs() {
+    if (!currentLibFile) return;
+    const checked = Array.from(document.querySelectorAll('#lib-list input[type=checkbox]:checked')).map(cb => cb.value);
+    try {
+        const res = await fetch('/api/list_config', {
+            method: 'POST', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({type: 'traktlists', filename: currentLibFile, config: {library_ids: checked}})
+        });
+        const data = await res.json();
+        if (data.success) {
+            closeLibModal();
+            location.reload();
+        } else {
+            alert(data.error || 'Failed');
+        }
+    } catch(e) { alert('Error: ' + e); }
+}
+</script>
+{% endblock %}

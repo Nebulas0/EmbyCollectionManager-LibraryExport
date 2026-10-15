@@ -1,0 +1,38 @@
+tmdb:
+  api_key: YOUR_TMDB_API_KEY
+
+emby:
+  api_key: YOUR_EMBY_API_KEY
+  server_url: http://emby:8096
+  user_id: YOUR_EMBY_USER_ID
+
+trakt:
+  client_id: YOUR_TRAKT_CLIENT_ID
+  client_secret: YOUR_TRAKT_CLIENT_SECRET
+  access_token: ""
+  username: me
+
+traktlists:
+  enabled: true
+  directory: traktlists
+  max_items_per_collection: 0
+
+mdblist:
+  api_key: YOUR_MDBLIST_API_KEY
+
+mdblists:
+  enabled: true
+  directory: mdblists
+  max_items_per_collection: 0
+
+library_exports:
+  media_root: /mnt/unionfs
+  output_root: /mnt/local/embycollectionmanager-library-exports
+  auto_create_emby_library: true
+
+poster_settings:
+  enable_custom_posters: true
+  template_name: default.png
+  text_color: [255, 255, 255]
+  bg_color: [0, 0, 0, 128]
+  text_position: 0.5

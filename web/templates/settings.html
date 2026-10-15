@@ -1,0 +1,155 @@
+{% extends "base.html" %}
+{% block title %}Settings - Emby Collection Manager{% endblock %}
+{% block content %}
+{% set library_exports = config.get('library_exports') or {} %}
+<h1 style="margin-bottom:20px">Settings</h1>
+{% if saved %}<div class="alert alert-success">Settings saved successfully!</div>{% endif %}
+{% if error %}<div class="alert alert-error">{{ error }}</div>{% endif %}
+
+<div class="card">
+    <h2>Backup / Restore</h2>
+    <p style="color:var(--text-dim);margin-bottom:10px;font-size:0.9rem">Export all settings, overrides, and list metadata to a single file.</p>
+    <button class="btn btn-secondary" onclick="exportConfig()">Export Config</button>
+    <label class="btn btn-secondary" style="cursor:pointer">Import Config<input type="file" accept=".json" style="display:none" onchange="importConfig(this)"></label>
+</div>
+
+<form method="POST">
+    <div class="card">
+        <h2>TMDb Configuration</h2>
+        <div class="form-group">
+            <label>TMDb API Key</label>
+            <div style="display:flex;gap:5px">
+                <input type="password" name="tmdb_api_key" id="tmdb_api_key" value="{{ config.get('tmdb',{}).get('api_key','') }}">
+                <button type="button" class="btn btn-secondary btn-sm" onclick="toggleKey('tmdb_api_key')">Show</button>
+            </div>
+        </div>
+        <button type="button" class="btn btn-secondary btn-sm" onclick="testApi('tmdb')">Test TMDb</button><div id="test-tmdb"></div>
+    </div>
+
+    <div class="card">
+        <h2>Emby Configuration</h2>
+        <div class="form-group"><label>Emby Server URL</label><input type="text" name="emby_server_url" value="{{ config.get('emby',{}).get('server_url','') }}"></div>
+        <div class="form-group">
+            <label>Emby API Key</label>
+            <div style="display:flex;gap:5px">
+                <input type="password" name="emby_api_key" id="emby_api_key" value="{{ config.get('emby',{}).get('api_key','') }}">
+                <button type="button" class="btn btn-secondary btn-sm" onclick="toggleKey('emby_api_key')">Show</button>
+            </div>
+        </div>
+        <div class="form-group"><label>Emby User ID</label><input type="text" name="emby_user_id" value="{{ config.get('emby',{}).get('user_id','') }}"></div>
+        <button type="button" class="btn btn-secondary btn-sm" onclick="testApi('emby')">Test Emby</button><div id="test-emby"></div>
+    </div>
+
+    <div class="card">
+        <h2>Trakt Configuration (Optional)</h2>
+        <div class="form-row">
+            <div class="form-group"><label>Client ID</label><input type="password" name="trakt_client_id" id="trakt_client_id" value="{{ config.get('trakt',{}).get('client_id','') }}"><button type="button" class="btn btn-secondary btn-sm" onclick="toggleKey('trakt_client_id')">Show</button></div>
+            <div class="form-group"><label>Client Secret</label><input type="password" name="trakt_client_secret" id="trakt_client_secret" value="{{ config.get('trakt',{}).get('client_secret','') }}"><button type="button" class="btn btn-secondary btn-sm" onclick="toggleKey('trakt_client_secret')">Show</button></div>
+        </div>
+        <div class="form-row">
+            <div class="form-group"><label>Access Token (optional)</label><input type="password" name="trakt_access_token" id="trakt_access_token" value="{{ config.get('trakt',{}).get('access_token','') }}"><button type="button" class="btn btn-secondary btn-sm" onclick="toggleKey('trakt_access_token')">Show</button></div>
+            <div class="form-group"><label>Username</label><input type="text" name="trakt_username" value="{{ config.get('trakt',{}).get('username','me') }}"></div>
+        </div>
+        <button type="button" class="btn btn-secondary btn-sm" onclick="testApi('trakt')">Test Trakt</button><div id="test-trakt"></div>
+    </div>
+
+    <div class="card">
+        <h2>MDBList Configuration (Optional)</h2>
+        <div class="form-group">
+            <label>MDBList API Key</label>
+            <div style="display:flex;gap:5px">
+                <input type="password" name="mdblist_api_key" id="mdblist_api_key" value="{{ config.get('mdblist',{}).get('api_key','') }}">
+                <button type="button" class="btn btn-secondary btn-sm" onclick="toggleKey('mdblist_api_key')">Show</button>
+            </div>
+        </div>
+        <button type="button" class="btn btn-secondary btn-sm" onclick="testApi('mdblist')">Test MDBList</button><div id="test-mdblist"></div>
+    </div>
+
+    <div class="card">
+        <h2>Trakt Lists Settings</h2>
+        <div class="form-group"><label><input type="checkbox" name="traktlists_enabled" {% if config.get('traktlists',{}).get('enabled',True) %}checked{% endif %}> Enable Trakt list processing</label></div>
+        <div class="form-row">
+            <div class="form-group"><label>Directory</label><input type="text" name="traktlists_directory" value="{{ config.get('traktlists',{}).get('directory','traktlists') }}"></div>
+            <div class="form-group"><label>Max items (0=no limit)</label><input type="number" name="traktlists_max_items" value="{{ config.get('traktlists',{}).get('max_items_per_collection',0) }}"></div>
+        </div>
+    </div>
+
+    <div class="card">
+        <h2>MDBList Settings</h2>
+        <div class="form-group"><label><input type="checkbox" name="mdblists_enabled" {% if config.get('mdblists',{}).get('enabled',True) %}checked{% endif %}> Enable MDBList processing</label></div>
+        <div class="form-row">
+            <div class="form-group"><label>Directory</label><input type="text" name="mdblists_directory" value="{{ config.get('mdblists',{}).get('directory','mdblists') }}"></div>
+            <div class="form-group"><label>Max items (0=unlimited)</label><input type="number" name="mdblists_max_items" value="{{ config.get('mdblists',{}).get('max_items_per_collection',0) }}"></div>
+        </div>
+    </div>
+
+    <div class="card">
+        <h2>Collection Library Export</h2>
+        <p style="color:var(--text-dim);margin-bottom:15px;font-size:0.9rem">Exports only collections opted into symlink library export. Source folders are linked without changing the original media.</p>
+        <div class="form-group">
+            <label><input type="checkbox" name="library_export_auto_create_emby_library" {% if library_exports.get('auto_create_emby_library',True) %}checked{% endif %}> Automatically create the Emby library for opted-in collections</label>
+            <small style="color:var(--text-dim)">When off, symlink folders are still maintained for manual library setup. Existing matching libraries are refreshed when their contents change and are never deleted.</small>
+        </div>
+        <div class="form-group">
+            <label>Emby media path root</label>
+            <input type="text" name="library_export_media_root" value="{{ library_exports.get('media_root',default_library_export_media_root) }}">
+            <small style="color:var(--text-dim)">Use the path as Emby reports it. It must be within one of the media roots mounted read-only into this app, such as /mnt/unionfs.</small>
+        </div>
+        <div class="form-group">
+            <label>Symlink output folder</label>
+            <input type="text" name="library_export_output_root" value="{{ library_exports.get('output_root',default_library_export_output_root) }}">
+            <small style="color:var(--text-dim)">Choose this folder or a subfolder under the configured export mount. Each collection creates a “-library” folder here.</small>
+        </div>
+    </div>
+
+    <div class="card">
+        <h2>Poster Generation Settings</h2>
+        <div class="form-group"><label><input type="checkbox" name="poster_enable" {% if config.get('poster_settings',{}).get('enable_custom_posters',True) %}checked{% endif %}> Enable custom poster generation</label></div>
+        <div class="form-row">
+            <div class="form-group"><label>Template name</label><input type="text" name="poster_template" value="{{ config.get('poster_settings',{}).get('template_name','default.png') }}"></div>
+            <div class="form-group"><label>Text position (0-1)</label><input type="number" step="0.1" min="0" max="1" name="poster_text_position" value="{{ config.get('poster_settings',{}).get('text_position',0.5) }}"></div>
+        </div>
+        <div class="form-row">
+            <div class="form-group"><label>Text R</label><input type="number" min="0" max="255" name="text_color_r" value="{{ config.get('poster_settings',{}).get('text_color',[255,255,255])[0] }}"></div>
+            <div class="form-group"><label>Text G</label><input type="number" min="0" max="255" name="text_color_g" value="{{ config.get('poster_settings',{}).get('text_color',[255,255,255])[1] }}"></div>
+            <div class="form-group"><label>Text B</label><input type="number" min="0" max="255" name="text_color_b" value="{{ config.get('poster_settings',{}).get('text_color',[255,255,255])[2] }}"></div>
+        </div>
+        <div class="form-row">
+            <div class="form-group"><label>BG R</label><input type="number" min="0" max="255" name="bg_color_r" value="{{ config.get('poster_settings',{}).get('bg_color',[0,0,0,128])[0] }}"></div>
+            <div class="form-group"><label>BG G</label><input type="number" min="0" max="255" name="bg_color_g" value="{{ config.get('poster_settings',{}).get('bg_color',[0,0,0,128])[1] }}"></div>
+            <div class="form-group"><label>BG B</label><input type="number" min="0" max="255" name="bg_color_b" value="{{ config.get('poster_settings',{}).get('bg_color',[0,0,0,128])[2] }}"></div>
+            <div class="form-group"><label>BG Alpha</label><input type="number" min="0" max="255" name="bg_color_a" value="{{ config.get('poster_settings',{}).get('bg_color',[0,0,0,128])[3] }}"></div>
+        </div>
+    </div>
+
+    <div class="card">
+        <h2>Sync Settings</h2>
+        <div class="form-group"><label>Sync interval (hours)</label><input type="number" name="sync_interval" value="{{ state.get('sync_interval_hours',24) }}" min="1" max="168"></div>
+    </div>
+
+    <div class="card">
+        <h2>Notifications (Discord/Webhook)</h2>
+        <div class="form-group"><label><input type="checkbox" id="notif_enabled"> Enable notifications</label></div>
+        <div class="form-group"><label>Webhook URL</label><input type="text" id="notif_webhook" placeholder="https://discord.com/api/webhooks/..."></div>
+        <div class="form-group"><label><input type="checkbox" id="notif_success" checked> Notify on success</label></div>
+        <div class="form-group"><label><input type="checkbox" id="notif_error" checked> Notify on error</label></div>
+        <button type="button" class="btn btn-primary" onclick="saveNotifications()">Save Notifications</button>
+    </div>
+
+    <button type="submit" class="btn btn-primary">Save Settings</button>
+</form>
+{% endblock %}
+{% block scripts %}
+<script>
+function toggleKey(id){const el=document.getElementById(id);el.type=el.type==='password'?'text':'password';el.nextElementSibling.textContent=el.type==='password'?'Show':'Hide'}
+async function testApi(t){const d=document.getElementById('test-'+t);d.innerHTML='<div class="test-result">Testing...</div>';try{const b={};if(t==='tmdb')b.api_key=document.querySelector('[name="tmdb_api_key"]').value;if(t==='emby'){b.server_url=document.querySelector('[name="emby_server_url"]').value;b.api_key=document.querySelector('[name="emby_api_key"]').value;b.user_id=document.querySelector('[name="emby_user_id"]').value}if(t==='trakt')b.client_id=document.querySelector('[name="trakt_client_id"]').value;if(t==='mdblist')b.api_key=document.querySelector('[name="mdblist_api_key"]').value;const r=await fetch('/api/test_'+t,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)});const data=await r.json();if(data.success){let m='OK!';if(t==='emby'&&data.libraries)m+=' Found '+data.count+' libraries';if(t==='tmdb'&&data.sample)m+=' Sample: '+data.sample;d.innerHTML='<div class="test-result ok">'+m+'</div>'}else{d.innerHTML='<div class="test-result fail">Failed: '+(data.error||'Unknown')+'</div>'}}catch(e){d.innerHTML='<div class="test-result fail">Error: '+e+'</div>'}}
+
+function exportConfig(){window.location.href='/api/export_config'}
+async function importConfig(input){if(!input.files[0])return;const formData=new FormData();formData.append('file',input.files[0]);try{const r=await fetch('/api/import_config',{method:'POST',body:formData});const d=await r.json();if(d.success){alert('Config imported!');location.reload()}else{alert(d.error||'Failed')}}catch(e){alert('Error: '+e)}}
+
+// Load notification settings
+async function loadNotifications(){try{const r=await fetch('/api/notifications');const d=await r.json();document.getElementById('notif_enabled').checked=d.enabled||false;document.getElementById('notif_webhook').value=d.webhook_url||'';document.getElementById('notif_success').checked=d.notify_on_success!==false;document.getElementById('notif_error').checked=d.notify_on_error!==false}catch(e){}}
+loadNotifications();
+async function saveNotifications(){const data={enabled:document.getElementById('notif_enabled').checked,webhook_url:document.getElementById('notif_webhook').value,notify_on_success:document.getElementById('notif_success').checked,notify_on_error:document.getElementById('notif_error').checked};try{const r=await fetch('/api/notifications',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)});const d=await r.json();if(d.success)alert('Notifications saved!');else alert(d.error||'Failed')}catch(e){alert('Error: '+e)}}
+</script>
+{% endblock %}
