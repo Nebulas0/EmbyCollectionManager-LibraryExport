@@ -263,7 +263,7 @@ class EmbyClient(MediaServerClient):
                 endpoint,
                 params={
                     'Ids': ','.join(ids[offset:offset + 100]),
-                    'Fields': 'Path,SeriesId,ProviderIds,ProductionYear,Overview,Genres,Studios,PremiereDate,OfficialRating,CommunityRating,RunTimeTicks',
+                    'Fields': 'Path,ProviderIds,ProductionYear,Overview,Genres,Studios,PremiereDate,OfficialRating,CommunityRating,RunTimeTicks',
                     'Limit': 100,
                 },
             )
@@ -286,7 +286,7 @@ class EmbyClient(MediaServerClient):
                     'ParentId': series_id,
                     'IncludeItemTypes': 'Episode',
                     'Recursive': 'true',
-                    'Fields': 'Path,ProviderIds,ProductionYear,Overview,PremiereDate,IndexNumber,ParentIndexNumber,RunTimeTicks',
+                    'Fields': 'Path,ProviderIds,ProductionYear,Overview,PremiereDate,RunTimeTicks',
                     'StartIndex': start_index,
                     'Limit': limit,
                 },

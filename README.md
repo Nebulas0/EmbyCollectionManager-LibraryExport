@@ -86,6 +86,8 @@ Movies and TV shows each have their own enable switch, library selection, lookba
 
 Most Watched creates a real symlink to each selected movie file and to each episode file under one ranked Series folder. It adds local NFO sidecars and a poster with the rank badge; it never copies video data or modifies the source media. The folder prefix and NFO sort title carry the rank so the list sorts in ascending order. Emby should sort the library by Name/Sort Name ascending; a client using a different sort order may need that changed. Regular collection exports keep their existing directory-symlink behavior.
 
+When a title is no longer in the selected libraries' ranked results, the next sync prunes only its manifest-owned links and sidecars. Original media and Emby library entries are left untouched.
+
 Automatic Emby library registration follows the global **Automatically create the Emby library for opted-in collections** setting. When that setting is off, the Most Watched output folders are still maintained for manual library setup. The manager never removes an Emby library entry automatically. On Emby 4.9, these are ordinary libraries; the manager does not create HomeScreenCompanion-style per-user Home Screen sections.
 
 ## Configuration and privacy
