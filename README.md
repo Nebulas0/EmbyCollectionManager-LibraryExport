@@ -11,6 +11,7 @@ This is a customized Emby Collection Manager based on [Nebulas0/EmbyCollectionMa
 - Creates movie links to the movie’s containing directory, including for `.mkv` and `.strm` media.
 - Links a TV series at its Series folder, preserving all seasons and episodes. If a collection contains episodes or seasons, the manager resolves their Emby `SeriesId` and links the series root once.
 - Reconciles symlinks on the normal sync interval and removes only links recorded in its own manifest. It never deletes the source media or automatically deletes an Emby library entry.
+- Optional Most Watched libraries use Playback Reporting data, with independent lookback days and top-item limits for movies and TV shows. Ranked posters show the item's position and NFO sort titles preserve the order.
 
 The current Trakt and MDBList importers process movie lists. The exporter can handle Series/Episode/Season items already present in an Emby collection, but does not add TV-show list ingestion.
 
@@ -18,6 +19,7 @@ The current Trakt and MDBList importers process movie lists. The exporter can ha
 
 - Emby with an administrator API key for automatic library creation.
 - Docker and Docker Compose.
+- The Emby [Playback Reporting plugin](https://github.com/faush01/playback_reporting) is required only for Most Watched libraries.
 - The Emby Collection Manager container must see the media paths exactly as Emby reports them.
 - A local writable output directory that is also visible to Emby at the same container path. Do not use a remote/rclone-only mount as the writable export directory.
 
@@ -75,6 +77,16 @@ For a main server using `/mnt/unionfs`, set both `LIBRARY_EXPORT_MEDIA_MOUNTS` a
 4. The next sync updates the Emby collection first, then reconciles the folder and, when enabled, creates or refreshes the corresponding Emby library named `<collection name>-library`.
 
 When items disappear from a collection, the next sync removes only the corresponding manager-owned symlinks. Turning off a collection’s export also clears its managed links on the next sync; the Emby library entry itself is left in place.
+
+## Most Watched libraries
+
+The Most Watched tab reads Playback Reporting's built-in `MoviesReport` and `TvShowsReport` API endpoints using the configured Emby administrator token. It aggregates tracked users (excluding users ignored in the Playback Reporting plugin) and ranks by play count, using watch time to break ties. The plugin must be installed and enabled on Emby; its reports only include playback history collected since installation.
+
+Movies and TV shows have separate enable switches, lookback periods, and item limits. Both default to 14 days and 10 items, and both exports are disabled until opted in. The normal manager sync refreshes enabled lists; the tab also offers a manual sync button.
+
+To make numbered posters and ordering work reliably as a separate Emby library, Most Watched entries use small `.strm` pointers plus NFO and poster sidecars. They point to the original media and do not copy video files. This differs from regular collection exports, which continue to use directory symlinks. Each poster receives a rank badge, and the NFO sort title is prefixed with the rank.
+
+Automatic Emby library registration follows the global **Automatically create the Emby library for opted-in collections** setting. When that setting is off, the Most Watched output folders are still maintained for manual library setup. The manager never removes an Emby library entry automatically. On Emby 4.9, these are ordinary libraries; the manager does not create HomeScreenCompanion-style per-user Home Screen sections.
 
 ## Configuration and privacy
 

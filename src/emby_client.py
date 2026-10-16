@@ -222,6 +222,76 @@ class EmbyClient(MediaServerClient):
             expanded.append(series_items[series_id])
         return expanded
 
+    def search_items_by_name(self, name: str, item_type: str) -> Optional[List[Dict[str, Any]]]:
+        endpoint = f"/Users/{self.user_id}/Items"
+        items = []
+        start_index = 0
+        limit = 100
+
+        while True:
+            data = self._make_api_request(
+                'GET',
+                endpoint,
+                params={
+                    'SearchTerm': name,
+                    'IncludeItemTypes': item_type,
+                    'Recursive': 'true',
+                    'Fields': 'Path,ProviderIds,ProductionYear,Overview,Genres,Studios,PremiereDate,OfficialRating,CommunityRating,RunTimeTicks',
+                    'StartIndex': start_index,
+                    'Limit': limit,
+                },
+            )
+            if not isinstance(data, dict) or not isinstance(data.get('Items'), list):
+                return None
+
+            page = data['Items']
+            items.extend(page)
+            start_index += len(page)
+            total = data.get('TotalRecordCount')
+            if not page or (total is not None and start_index >= total) or (total is None and len(page) < limit):
+                return items
+
+    def get_series_episodes(self, series_id: str) -> Optional[List[Dict[str, Any]]]:
+        endpoint = f"/Users/{self.user_id}/Items"
+        episodes = []
+        start_index = 0
+        limit = 500
+
+        while True:
+            data = self._make_api_request(
+                'GET',
+                endpoint,
+                params={
+                    'ParentId': series_id,
+                    'IncludeItemTypes': 'Episode',
+                    'Recursive': 'true',
+                    'Fields': 'Path,ProviderIds,ProductionYear,Overview,PremiereDate,IndexNumber,ParentIndexNumber,RunTimeTicks',
+                    'StartIndex': start_index,
+                    'Limit': limit,
+                },
+            )
+            if not isinstance(data, dict) or not isinstance(data.get('Items'), list):
+                return None
+
+            page = data['Items']
+            episodes.extend(page)
+            start_index += len(page)
+            total = data.get('TotalRecordCount')
+            if not page or (total is not None and start_index >= total) or (total is None and len(page) < limit):
+                return episodes
+
+    def get_item_image_bytes(self, item_id: str, image_type: str = 'Primary') -> Optional[bytes]:
+        try:
+            response = self.session.get(
+                f"{self.server_url}/Items/{item_id}/Images/{image_type}",
+                timeout=20,
+            )
+            if response.status_code == 200 and response.content:
+                return response.content
+        except requests.RequestException as e:
+            logger.debug("Could not load %s image for item %s: %s", image_type, item_id, e)
+        return None
+
     def ensure_library(self, name: str, path: str, collection_type: str) -> Optional[Tuple[str, bool]]:
         folders = self._make_api_request('GET', '/Library/VirtualFolders')
         if not isinstance(folders, list):

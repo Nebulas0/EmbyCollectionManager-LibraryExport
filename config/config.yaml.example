@@ -30,6 +30,16 @@ library_exports:
   output_root: /mnt/local/embycollectionmanager-library-exports
   auto_create_emby_library: true
 
+most_watched:
+  movies:
+    enabled: false
+    days: 14
+    limit: 10
+  tv_shows:
+    enabled: false
+    days: 14
+    limit: 10
+
 poster_settings:
   enable_custom_posters: true
   template_name: default.png

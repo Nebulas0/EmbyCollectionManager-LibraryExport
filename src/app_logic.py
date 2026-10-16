@@ -613,6 +613,28 @@ def main():
                 list_name = list_info.get('name', 'Unknown')
                 logger.error(f"Error processing custom list '{list_name}': {e}")
 
+    if isinstance(config.get('most_watched'), dict):
+        if emby is None:
+            logger.warning("Most Watched settings exist, but Emby is not configured")
+        else:
+            try:
+                from src.most_watched import sync_most_watched
+                result = sync_most_watched(
+                    emby,
+                    config,
+                    os.path.dirname(os.path.abspath(args.config)),
+                )
+                if result.get('errors'):
+                    logger.warning("Most Watched sync completed with warnings: %s", '; '.join(result['errors']))
+                else:
+                    logger.info(
+                        "Most Watched sync complete: %s movies, %s TV shows",
+                        len(result.get('movies', [])),
+                        len(result.get('tv_shows', [])),
+                    )
+            except Exception as e:
+                logger.exception("Most Watched export failed: %s", e)
+
 
 def get_random_movie_artwork(tmdb_client, tmdb_ids, collection_name):
     """

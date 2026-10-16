@@ -33,6 +33,33 @@ class EmbyLibraryApiTests(unittest.TestCase):
 
         self.assertEqual(items, [{'Id': 'series-id', 'Type': 'Series', 'Path': series_path}])
 
+    def test_series_episode_items_are_paginated(self):
+        self.client._make_api_request = Mock(side_effect=[
+            {'Items': [{'Id': 'episode-one'}], 'TotalRecordCount': 2},
+            {'Items': [{'Id': 'episode-two'}], 'TotalRecordCount': 2},
+        ])
+
+        episodes = self.client.get_series_episodes('series-id')
+
+        self.assertEqual([item['Id'] for item in episodes], ['episode-one', 'episode-two'])
+        self.assertEqual(self.client._make_api_request.call_count, 2)
+
+    def test_title_search_returns_matching_item_fields(self):
+        expected = {'Id': 'movie-id', 'Name': 'The Killers', 'Path': '/mnt/media/movie.mkv'}
+        self.client._make_api_request = Mock(return_value={
+            'Items': [expected],
+            'TotalRecordCount': 1,
+        })
+
+        items = self.client.search_items_by_name('The Killers', 'Movie')
+
+        self.assertEqual(items, [expected])
+        self.client._make_api_request.assert_called_once()
+        self.assertEqual(
+            self.client._make_api_request.call_args.kwargs['params']['IncludeItemTypes'],
+            'Movie',
+        )
+
     def test_existing_library_at_the_same_path_is_reused(self):
         self.client._make_api_request = Mock(return_value=[{
             'Name': 'Horror-library',

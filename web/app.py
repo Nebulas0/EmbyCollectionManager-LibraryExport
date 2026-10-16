@@ -50,6 +50,7 @@ app = Flask(__name__)
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CONFIG_PATH = os.path.join(BASE_DIR, 'config', 'config.yaml')
 STATE_PATH = os.path.join(BASE_DIR, 'config', 'webui_state.json')
+MOST_WATCHED_STATE_PATH = os.path.join(BASE_DIR, 'config', 'most_watched_results.json')
 
 # Sync state tracking
 sync_state = {
@@ -185,6 +186,67 @@ def dashboard():
     total_count = len(recipes)
     return render_template('dashboard.html', config=config, state=state,
                            sync_state=sync_state, enabled_count=enabled_count, total_count=total_count)
+
+
+@app.route('/most-watched', methods=['GET', 'POST'])
+def most_watched():
+    from src.emby_client import EmbyClient
+    from src.most_watched import (
+        PlaybackReportingClient,
+        load_most_watched_results,
+        normalize_most_watched_settings,
+    )
+
+    config = load_config()
+    settings = normalize_most_watched_settings(config.get('most_watched'))
+    saved = False
+    error = None
+
+    if request.method == 'POST':
+        settings = normalize_most_watched_settings({
+            'movies': {
+                'enabled': request.form.get('movies_enabled') == 'on',
+                'days': request.form.get('movies_days', 14),
+                'limit': request.form.get('movies_limit', 10),
+            },
+            'tv_shows': {
+                'enabled': request.form.get('tv_shows_enabled') == 'on',
+                'days': request.form.get('tv_shows_days', 14),
+                'limit': request.form.get('tv_shows_limit', 10),
+            },
+        })
+        config['most_watched'] = settings
+        if save_config(config):
+            saved = True
+        else:
+            error = 'Failed to save Most Watched settings.'
+
+    emby_config = config.get('emby') or {}
+    plugin_available = False
+    plugin_message = 'Configure an Emby server and administrator API key to check Playback Reporting.'
+    if emby_config.get('server_url') and emby_config.get('api_key'):
+        try:
+            emby = EmbyClient(
+                server_url=emby_config['server_url'],
+                api_key=emby_config['api_key'],
+                user_id=emby_config.get('user_id', ''),
+                config=config,
+            )
+            plugin_available, plugin_message = PlaybackReportingClient(emby).is_available()
+        except Exception as exc:
+            plugin_message = f'Could not check Playback Reporting: {exc}'
+
+    results = load_most_watched_results(os.path.dirname(MOST_WATCHED_STATE_PATH))
+    return render_template(
+        'most_watched.html',
+        settings=settings,
+        results=results,
+        plugin_available=plugin_available,
+        plugin_message=plugin_message,
+        auto_create_emby_library=(config.get('library_exports') or {}).get('auto_create_emby_library', True),
+        saved=saved,
+        error=error,
+    )
 
 
 @app.route('/settings', methods=['GET', 'POST'])
