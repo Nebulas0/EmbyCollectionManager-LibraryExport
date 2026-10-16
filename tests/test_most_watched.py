@@ -8,6 +8,7 @@ from unittest.mock import patch
 from src.most_watched import (
     MostWatchedLibraryExporter,
     PlaybackReportingClient,
+    _rank_shows_from_events,
     normalize_most_watched_settings,
     sync_most_watched,
 )
@@ -40,12 +41,20 @@ class FakeEmby:
     def __init__(self, episodes=None):
         self.session = FakeSession([])
         self.episodes = episodes or []
+        self.libraries = []
+        self.items = {}
         self.created_libraries = []
         self.refreshed = []
         self.refreshed_by_name = []
 
     def get_series_episodes(self, series_id):
         return self.episodes
+
+    def get_libraries(self):
+        return self.libraries
+
+    def get_items_by_ids(self, item_ids):
+        return [self.items[str(item_id)] for item_id in item_ids if str(item_id) in self.items]
 
     def get_item_image_bytes(self, item_id, image_type='Primary'):
         return None
@@ -68,28 +77,42 @@ class MostWatchedSettingsTests(unittest.TestCase):
         self.assertEqual(
             normalize_most_watched_settings({}),
             {
-                'movies': {'enabled': False, 'days': 14, 'limit': 10},
-                'tv_shows': {'enabled': False, 'days': 14, 'limit': 10},
+                'movies': {'enabled': False, 'days': 14, 'limit': 10, 'library_ids': None},
+                'tv_shows': {'enabled': False, 'days': 14, 'limit': 10, 'library_ids': None},
             },
         )
         settings = normalize_most_watched_settings({
             'movies': {'enabled': 'true', 'days': 5000, 'limit': 0},
             'tv_shows': {'days': 'invalid', 'limit': 200},
         })
-        self.assertEqual(settings['movies'], {'enabled': True, 'days': 3650, 'limit': 1})
-        self.assertEqual(settings['tv_shows'], {'enabled': False, 'days': 14, 'limit': 100})
+        self.assertEqual(settings['movies'], {
+            'enabled': True, 'days': 3650, 'limit': 1, 'library_ids': None,
+        })
+        self.assertEqual(settings['tv_shows'], {
+            'enabled': False, 'days': 14, 'limit': 100, 'library_ids': None,
+        })
 
 
 class PlaybackReportingClientTests(unittest.TestCase):
-    def test_reads_builtin_movie_report_with_configured_days(self):
+    def test_reads_raw_playback_events_with_configured_days_and_ignored_users(self):
         emby = FakeEmby()
         emby.session = FakeSession([
-            FakeResponse(payload=[{'label': 'The Killers', 'count': 4, 'time': 5400}]),
+            FakeResponse(payload=[
+                {'item_id': 123, 'item_type': 'Movie', 'user_id': 'visible', 'duration': '5400'},
+                {'item_id': 124, 'item_type': 'Movie', 'user_id': 'ignored', 'duration': '3600'},
+            ]),
+            FakeResponse(payload=[
+                {'id': 'ignored', 'in_list': True},
+                {'id': 'visible', 'in_list': False},
+            ]),
         ])
-        rows = PlaybackReportingClient(emby).get_report('movies', 14)
-        self.assertEqual(rows[0]['label'], 'The Killers')
-        self.assertEqual(emby.session.calls[0][0], 'http://emby.invalid/user_usage_stats/MoviesReport')
-        self.assertEqual(emby.session.calls[0][1]['params'], {'days': 14})
+        rows = PlaybackReportingClient(emby).get_playback_events(14)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]['item_id'], 123)
+        self.assertEqual(emby.session.calls[0][0], 'http://emby.invalid/user_usage_stats/UserPlaylist')
+        self.assertEqual(emby.session.calls[0][1]['params'], {
+            'user_id': '', 'aggregate_data': 'false', 'days': 14,
+        })
 
     def test_missing_plugin_is_reported_without_failing_the_page(self):
         emby = FakeEmby()
@@ -99,15 +122,6 @@ class PlaybackReportingClientTests(unittest.TestCase):
         self.assertIn('not found', message)
 
     def test_sync_uses_configured_days_and_limit_and_records_ranked_rows(self):
-        class SearchableEmby(FakeEmby):
-            def search_items_by_name(self, name, item_type):
-                return [{
-                    'Id': 'movie-id',
-                    'Type': item_type,
-                    'Name': name,
-                    'Path': '/mnt/media/movie.mkv',
-                }]
-
         class RecordingExporter:
             def __init__(self):
                 self.calls = []
@@ -116,19 +130,49 @@ class PlaybackReportingClientTests(unittest.TestCase):
                 self.calls.append((kind, rows, create_emby_library))
                 return {'library_name': 'Most Watched Movies-library', 'item_count': len(rows)}
 
-        emby = SearchableEmby()
+        emby = FakeEmby()
+        movie = {
+            'Id': 'movie-id',
+            'Type': 'Movie',
+            'Name': 'The Killers',
+            'Path': '/mnt/media/movies/the-killers.mkv',
+            'ProviderIds': {'Imdb': 'tt0038669'},
+        }
+        other_movie = {
+            'Id': 'other-movie-id',
+            'Type': 'Movie',
+            'Name': 'Other Library Hit',
+            'Path': '/mnt/media/other/other-hit.mkv',
+        }
+        emby.items = {'movie-id': movie, 'other-movie-id': other_movie}
+        emby.libraries = [{
+            'Id': 'movie-lib',
+            'Name': 'Movies',
+            'CollectionType': 'movies',
+            'Locations': ['/mnt/media/movies'],
+        }, {
+            'Id': 'other-lib',
+            'Name': 'Other Movies',
+            'CollectionType': 'movies',
+            'Locations': ['/mnt/media/other'],
+        }]
+        playback_events = [
+            {'item_id': 'movie-id', 'item_type': 'Movie', 'user_id': 'u1', 'duration': '900'}
+            for _ in range(8)
+        ] + [
+            {'item_id': 'other-movie-id', 'item_type': 'Movie', 'user_id': 'u2', 'duration': '1800'}
+            for _ in range(20)
+        ]
         emby.session = FakeSession([
             FakeResponse(payload=['Movie', 'Episode']),
-            FakeResponse(payload=[
-                {'label': 'The Killers', 'count': 8, 'time': 7200},
-                {'label': 'Another Movie', 'count': 5, 'time': 5000},
-            ]),
+            FakeResponse(payload=playback_events),
+            FakeResponse(payload=[]),
         ])
         exporter = RecordingExporter()
         config = {
             'most_watched': {
-                'movies': {'enabled': True, 'days': 21, 'limit': 1},
-                'tv_shows': {'enabled': False, 'days': 14, 'limit': 10},
+                'movies': {'enabled': True, 'days': 21, 'limit': 1, 'library_ids': ['movie-lib']},
+                'tv_shows': {'enabled': False, 'days': 14, 'limit': 10, 'library_ids': []},
             },
             'library_exports': {
                 'media_root': '/mnt/media',
@@ -143,13 +187,54 @@ class PlaybackReportingClientTests(unittest.TestCase):
             state = sync_most_watched(emby, config, state_dir)
             saved = json.loads((Path(state_dir) / 'most_watched_results.json').read_text())
 
-        self.assertEqual(emby.session.calls[1][1]['params'], {'days': 21})
+        self.assertEqual(emby.session.calls[1][1]['params'], {
+            'user_id': '', 'aggregate_data': 'false', 'days': 21,
+        })
         calls = {call[0]: call for call in exporter.calls}
         self.assertEqual(calls['movies'][1][0]['name'], 'The Killers')
+        self.assertEqual(calls['movies'][1][0]['plays'], 8)
         self.assertFalse(calls['movies'][2])
         self.assertEqual(calls['tv_shows'][1], [])
         self.assertEqual(state['movies'][0]['plays'], 8)
         self.assertEqual(saved['movies'][0]['rank'], 1)
+
+    def test_episode_playbacks_aggregate_to_series_and_honor_library_roots(self):
+        emby = FakeEmby()
+        emby.items = {
+            'episode-one': {
+                'Id': 'episode-one', 'Type': 'Episode', 'SeriesId': 'series-one',
+                'Path': '/media/tv/Chief of War/Season 01/episode-1.mkv',
+            },
+            'episode-two': {
+                'Id': 'episode-two', 'Type': 'Episode', 'SeriesId': 'series-one',
+                'Path': '/media/tv/Chief of War/Season 01/episode-2.mkv',
+            },
+            'other-episode': {
+                'Id': 'other-episode', 'Type': 'Episode', 'SeriesId': 'other-series',
+                'Path': '/media/other/Show/Season 01/episode.mkv',
+            },
+            'series-one': {
+                'Id': 'series-one', 'Type': 'Series', 'Name': 'Chief of War',
+                'Path': '/media/tv/Chief of War', 'ProviderIds': {'Tvdb': '418633'},
+            },
+            'other-series': {
+                'Id': 'other-series', 'Type': 'Series', 'Name': 'Other Show',
+                'Path': '/media/other/Show',
+            },
+        }
+        events = [
+            {'item_id': 'episode-one', 'item_type': 'Episode', 'duration': 1200},
+            {'item_id': 'episode-one', 'item_type': 'Episode', 'duration': 900},
+            {'item_id': 'episode-two', 'item_type': 'Episode', 'duration': 1500},
+            {'item_id': 'other-episode', 'item_type': 'Episode', 'duration': 6000},
+        ]
+
+        shows = _rank_shows_from_events(events, emby, [Path('/media/tv')], 10)
+
+        self.assertEqual(len(shows), 1)
+        self.assertEqual(shows[0]['name'], 'Chief of War')
+        self.assertEqual(shows[0]['plays'], 3)
+        self.assertEqual(shows[0]['watch_seconds'], 3600)
 
 
 @unittest.skipUnless(importlib.util.find_spec('PIL'), 'Pillow is needed to render ranked posters')
@@ -174,7 +259,7 @@ class MostWatchedLibraryExporterTests(unittest.TestCase):
             output_mount_root=self.base,
         )
 
-    def test_ranked_movie_pointer_has_badged_poster_and_never_copies_media(self):
+    def test_ranked_movie_symlink_has_badged_poster_and_never_copies_media(self):
         emby = FakeEmby()
         exporter = self.make_exporter(emby)
         movie_dir = self.media_root / 'movies' / 'The Killers (1946) {imdb-tt0038669}'
@@ -197,13 +282,14 @@ class MostWatchedLibraryExporterTests(unittest.TestCase):
         )
 
         output = Path(result['library_path'])
-        pointers = list(output.rglob('*.strm'))
+        pointers = list(output.rglob('*.mkv'))
         self.assertEqual(len(pointers), 1)
-        self.assertEqual(pointers[0].read_text().strip(), str(movie_path))
+        self.assertTrue(pointers[0].is_symlink())
+        self.assertEqual(pointers[0].resolve(), movie_path)
         nfo = pointers[0].with_suffix('.nfo').read_text()
         self.assertIn('<sorttitle>01 - The Killers</sorttitle>', nfo)
         self.assertTrue((pointers[0].parent / 'poster.jpg').is_file())
-        self.assertEqual(list(output.rglob('*.mkv')), [])
+        self.assertEqual(list(output.rglob('*.strm')), [])
         self.assertTrue(movie_path.is_file())
         self.assertEqual(emby.created_libraries, [])
 
@@ -212,7 +298,7 @@ class MostWatchedLibraryExporterTests(unittest.TestCase):
         self.assertTrue(movie_path.exists())
         self.assertTrue(emby.refreshed_by_name)
 
-    def test_ranked_show_contains_one_series_with_season_episode_pointers(self):
+    def test_ranked_show_contains_one_series_with_season_episode_symlinks(self):
         emby = FakeEmby()
         exporter = self.make_exporter(emby)
         series_dir = self.media_root / 'television' / '00s' / 'The Amazing Race (2001) {tvdb-77666}'
@@ -248,11 +334,12 @@ class MostWatchedLibraryExporterTests(unittest.TestCase):
         self.assertEqual(len(show_folders), 1)
         self.assertTrue(show_folders[0].name.startswith('01 - The Amazing Race'))
         self.assertIn('<sorttitle>01 - The Amazing Race</sorttitle>', (show_folders[0] / 'tvshow.nfo').read_text())
-        episode_pointer = next(show_folders[0].rglob('*.strm'))
-        self.assertEqual(episode_pointer.read_text().strip(), str(episode_path))
+        episode_pointer = next(show_folders[0].rglob('*.mkv'))
+        self.assertTrue(episode_pointer.is_symlink())
+        self.assertEqual(episode_pointer.resolve(), episode_path)
         self.assertIn('Season 39', str(episode_pointer))
         self.assertTrue((show_folders[0] / 'poster.jpg').is_file())
-        self.assertEqual(list(output.rglob('*.mkv')), [])
+        self.assertEqual(list(output.rglob('*.strm')), [])
 
 
 if __name__ == '__main__':

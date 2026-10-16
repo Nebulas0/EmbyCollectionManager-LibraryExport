@@ -199,27 +199,56 @@ def most_watched():
 
     config = load_config()
     settings = normalize_most_watched_settings(config.get('most_watched'))
+    available_libraries = [
+        library for library in get_emby_libraries()
+        if library.get('Name') not in {'Most Watched Movies-library', 'Most Watched TV Shows-library'}
+    ]
+    movie_libraries = [
+        library for library in available_libraries
+        if str(library.get('CollectionType', '')).lower() == 'movies'
+    ]
+    tv_libraries = [
+        library for library in available_libraries
+        if str(library.get('CollectionType', '')).lower() == 'tvshows'
+    ]
     saved = False
     error = None
 
     if request.method == 'POST':
-        settings = normalize_most_watched_settings({
+        submitted = {
             'movies': {
                 'enabled': request.form.get('movies_enabled') == 'on',
                 'days': request.form.get('movies_days', 14),
                 'limit': request.form.get('movies_limit', 10),
+                'library_ids': request.form.getlist('movies_library_ids'),
             },
             'tv_shows': {
                 'enabled': request.form.get('tv_shows_enabled') == 'on',
                 'days': request.form.get('tv_shows_days', 14),
                 'limit': request.form.get('tv_shows_limit', 10),
+                'library_ids': request.form.getlist('tv_shows_library_ids'),
             },
-        })
-        config['most_watched'] = settings
-        if save_config(config):
-            saved = True
+        }
+        settings = normalize_most_watched_settings(submitted)
+        valid_ids = {
+            'movies': {str(library.get('Id')) for library in movie_libraries},
+            'tv_shows': {str(library.get('Id')) for library in tv_libraries},
+        }
+        invalid_selection = any(
+            section['enabled'] and (
+                not section['library_ids']
+                or not set(section['library_ids']).issubset(valid_ids[kind])
+            )
+            for kind, section in settings.items()
+        )
+        if invalid_selection:
+            error = 'Choose at least one matching Emby source library for each enabled media type.'
         else:
-            error = 'Failed to save Most Watched settings.'
+            config['most_watched'] = settings
+            if save_config(config):
+                saved = True
+            else:
+                error = 'Failed to save Most Watched settings.'
 
     emby_config = config.get('emby') or {}
     plugin_available = False
@@ -241,6 +270,8 @@ def most_watched():
         'most_watched.html',
         settings=settings,
         results=results,
+        movie_libraries=movie_libraries,
+        tv_libraries=tv_libraries,
         plugin_available=plugin_available,
         plugin_message=plugin_message,
         auto_create_emby_library=(config.get('library_exports') or {}).get('auto_create_emby_library', True),

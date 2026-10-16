@@ -62,22 +62,29 @@ class LibraryExportSettingsTests(unittest.TestCase):
         self.assertTrue(saved['library_exports']['auto_create_emby_library'])
 
     def test_most_watched_tab_saves_independent_movie_and_tv_ranges(self):
-        response = self.client.post('/most-watched', data={
-            'movies_enabled': 'on',
-            'movies_days': '21',
-            'movies_limit': '12',
-            'tv_shows_enabled': 'on',
-            'tv_shows_days': '14',
-            'tv_shows_limit': '8',
-        })
+        libraries = [
+            {'Id': 'movie-lib', 'Name': 'Movies', 'CollectionType': 'movies', 'Locations': ['/media/movies']},
+            {'Id': 'tv-lib', 'Name': 'Television', 'CollectionType': 'tvshows', 'Locations': ['/media/tv']},
+        ]
+        with patch.object(web_app, 'get_emby_libraries', return_value=libraries):
+            response = self.client.post('/most-watched', data={
+                'movies_enabled': 'on',
+                'movies_days': '21',
+                'movies_limit': '12',
+                'movies_library_ids': 'movie-lib',
+                'tv_shows_enabled': 'on',
+                'tv_shows_days': '14',
+                'tv_shows_limit': '8',
+                'tv_shows_library_ids': 'tv-lib',
+            })
 
         self.assertEqual(response.status_code, 200)
         saved = yaml.safe_load(Path(web_app.CONFIG_PATH).read_text(encoding='utf-8'))
         self.assertEqual(saved['most_watched']['movies'], {
-            'enabled': True, 'days': 21, 'limit': 12,
+            'enabled': True, 'days': 21, 'limit': 12, 'library_ids': ['movie-lib'],
         })
         self.assertEqual(saved['most_watched']['tv_shows'], {
-            'enabled': True, 'days': 14, 'limit': 8,
+            'enabled': True, 'days': 14, 'limit': 8, 'library_ids': ['tv-lib'],
         })
 
     def test_most_watched_page_shows_default_values_and_plugin_setup_hint(self):

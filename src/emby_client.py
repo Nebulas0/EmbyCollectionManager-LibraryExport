@@ -251,6 +251,27 @@ class EmbyClient(MediaServerClient):
             if not page or (total is not None and start_index >= total) or (total is None and len(page) < limit):
                 return items
 
+    def get_items_by_ids(self, item_ids: List[str]) -> Optional[List[Dict[str, Any]]]:
+        if not item_ids:
+            return []
+        endpoint = f"/Users/{self.user_id}/Items"
+        items = []
+        ids = list(dict.fromkeys(str(item_id) for item_id in item_ids if item_id))
+        for offset in range(0, len(ids), 100):
+            data = self._make_api_request(
+                'GET',
+                endpoint,
+                params={
+                    'Ids': ','.join(ids[offset:offset + 100]),
+                    'Fields': 'Path,SeriesId,ProviderIds,ProductionYear,Overview,Genres,Studios,PremiereDate,OfficialRating,CommunityRating,RunTimeTicks',
+                    'Limit': 100,
+                },
+            )
+            if not isinstance(data, dict) or not isinstance(data.get('Items'), list):
+                return None
+            items.extend(data['Items'])
+        return items
+
     def get_series_episodes(self, series_id: str) -> Optional[List[Dict[str, Any]]]:
         endpoint = f"/Users/{self.user_id}/Items"
         episodes = []

@@ -60,6 +60,16 @@ class EmbyLibraryApiTests(unittest.TestCase):
             'Movie',
         )
 
+    def test_items_by_ids_are_batched_through_emby_items_api(self):
+        self.client._make_api_request = Mock(return_value={
+            'Items': [{'Id': '2328102', 'Type': 'Movie', 'Path': '/mnt/media/movie.mkv'}],
+        })
+
+        items = self.client.get_items_by_ids(['2328102'])
+
+        self.assertEqual(items[0]['Id'], '2328102')
+        self.assertEqual(self.client._make_api_request.call_args.kwargs['params']['Ids'], '2328102')
+
     def test_existing_library_at_the_same_path_is_reused(self):
         self.client._make_api_request = Mock(return_value=[{
             'Name': 'Horror-library',

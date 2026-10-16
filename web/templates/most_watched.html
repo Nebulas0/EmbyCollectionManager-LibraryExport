@@ -50,7 +50,27 @@
                            value="{{ section.get('limit', 10) }}" required>
                 </label>
             </div>
-            <p class="mw-help">Ranks by play count; watch time breaks ties. User activity is combined, excluding users ignored in Playback Reporting.</p>
+            {% set selected_library_ids = section.get('library_ids') %}
+            {% set library_options = movie_libraries if key == 'movies' else tv_libraries %}
+            <div class="mw-library-selection">
+                <strong>Source libraries</strong>
+                {% if library_options %}
+                <div class="mw-library-list">
+                    {% for library in library_options %}
+                    <label>
+                        <input type="checkbox"
+                               name="{{ key }}_library_ids"
+                               value="{{ library.get('Id') }}"
+                               {% if selected_library_ids is none or (library.get('Id')|string) in selected_library_ids %}checked{% endif %}>
+                        <span>{{ library.get('Name', 'Unnamed library') }}</span>
+                    </label>
+                    {% endfor %}
+                </div>
+                {% else %}
+                <p class="mw-empty">No matching Emby libraries were found.</p>
+                {% endif %}
+            </div>
+            <p class="mw-help">Ranks by play count; watch time breaks ties. Only playback from the selected libraries is counted. Users ignored in Playback Reporting are excluded.</p>
         </section>
         {% endfor %}
     </div>
@@ -64,9 +84,12 @@
 <section class="card mw-note">
     <h2 style="margin-top:0;font-size:1.1rem">How the ranked libraries work</h2>
     <p>
-        Top-list entries use small <code>.strm</code> pointer files, NFO sidecars, and locally generated
-        numbered posters. The video files are not copied. This gives each ranked item its own metadata
-        and sort title; regular collection exports continue to use the existing directory symlinks.
+        Playback events are matched by Emby item ID and restricted to the selected source libraries;
+        episode plays are grouped under their Series. Ranked entries use symlinks to the original media
+        files plus NFO sidecars and locally generated numbered posters. No video data is copied.
+        Rank-prefixed folders and NFO sort titles keep the order. Emby should sort by Name/Sort Name
+        ascending; clients using another sort order may need that changed. Regular collection exports
+        continue to use their existing directory symlinks.
     </p>
     {% if auto_create_emby_library %}
     <p>Automatic Emby library creation is on. Enabled lists will be registered as "Most Watched Movies-library" and "Most Watched TV Shows-library".</p>
@@ -125,6 +148,10 @@
     .mw-fields { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:14px; margin-top:18px; }
     .mw-fields label { display:flex; flex-direction:column; gap:7px; font-size:.88rem; }
     .mw-fields input { border:1px solid #cbd5e1; border-radius:6px; padding:9px 10px; background:#fff; color:#17202a; }
+    .mw-library-selection { margin-top:16px; font-size:.88rem; }
+    .mw-library-list { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px 14px; max-height:180px; overflow-y:auto; margin-top:8px; padding:10px; border:1px solid #e5e7eb; border-radius:6px; }
+    .mw-library-list label { display:flex; align-items:center; gap:7px; min-width:0; }
+    .mw-library-list span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
     .mw-help, .mw-note p, .mw-empty { color:var(--muted,#667085); font-size:.9rem; line-height:1.5; }
     .mw-actions { justify-content:flex-start; margin:16px 0 22px; }
     .mw-range { color:var(--muted,#667085); font-size:.86rem; }
@@ -141,6 +168,7 @@
     .button.primary { background:#176b55; border-color:#176b55; color:#fff; }
     @media (max-width:760px) {
         .mw-grid { grid-template-columns:1fr; }
+        .mw-library-list { grid-template-columns:1fr; }
         .mw-ranking li { grid-template-columns:34px minmax(0,1fr); }
         .mw-stats { grid-column:2; }
         .mw-card-heading { align-items:flex-start; flex-direction:column; }

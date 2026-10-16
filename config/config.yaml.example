@@ -35,10 +35,12 @@ most_watched:
     enabled: false
     days: 14
     limit: 10
+    library_ids: null
   tv_shows:
     enabled: false
     days: 14
     limit: 10
+    library_ids: null
 
 poster_settings:
   enable_custom_posters: true

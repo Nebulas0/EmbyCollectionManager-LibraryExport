@@ -80,11 +80,11 @@ When items disappear from a collection, the next sync removes only the correspon
 
 ## Most Watched libraries
 
-The Most Watched tab reads Playback Reporting's built-in `MoviesReport` and `TvShowsReport` API endpoints using the configured Emby administrator token. It aggregates tracked users (excluding users ignored in the Playback Reporting plugin) and ranks by play count, using watch time to break ties. The plugin must be installed and enabled on Emby; its reports only include playback history collected since installation.
+The Most Watched tab reads per-item playback events from Playback Reporting's `UserPlaylist` API using the configured Emby administrator token. It filters ignored users, resolves the event item IDs through Emby, and counts only items whose paths are inside the selected source libraries. Movie plays are grouped by movie identity; episode plays are grouped by Emby `SeriesId`.
 
-Movies and TV shows have separate enable switches, lookback periods, and item limits. Both default to 14 days and 10 items, and both exports are disabled until opted in. The normal manager sync refreshes enabled lists; the tab also offers a manual sync button.
+Movies and TV shows each have their own enable switch, library selection, lookback period, and item limit. Both periods default to 14 days and both limits to 10 items; exports are disabled until opted in. If no source library selection has been saved yet, all matching movie or TV libraries are selected. The normal manager sync refreshes enabled lists; the tab's manual button runs the full sync.
 
-To make numbered posters and ordering work reliably as a separate Emby library, Most Watched entries use small `.strm` pointers plus NFO and poster sidecars. They point to the original media and do not copy video files. This differs from regular collection exports, which continue to use directory symlinks. Each poster receives a rank badge, and the NFO sort title is prefixed with the rank.
+Most Watched creates a real symlink to each selected movie file and to each episode file under one ranked Series folder. It adds local NFO sidecars and a poster with the rank badge; it never copies video data or modifies the source media. The folder prefix and NFO sort title carry the rank so the list sorts in ascending order. Emby should sort the library by Name/Sort Name ascending; a client using a different sort order may need that changed. Regular collection exports keep their existing directory-symlink behavior.
 
 Automatic Emby library registration follows the global **Automatically create the Emby library for opted-in collections** setting. When that setting is off, the Most Watched output folders are still maintained for manual library setup. The manager never removes an Emby library entry automatically. On Emby 4.9, these are ordinary libraries; the manager does not create HomeScreenCompanion-style per-user Home Screen sections.
 
