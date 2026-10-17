@@ -749,8 +749,6 @@ def _rank_movies_from_events(
         group = grouped.setdefault(identity, {'item': item, 'name': item.get('Name') or '', 'plays': 0, 'watch_seconds': 0})
         group['plays'] += stats['plays']
         group['watch_seconds'] += stats['watch_seconds']
-    if stats_by_id and not items:
-        raise RuntimeError('Playback Reporting movie IDs could not be resolved in Emby; existing export was left unchanged.')
     ranked = sorted(
         grouped.values(),
         key=lambda row: (-row['plays'], -row['watch_seconds'], str(row['name']).casefold()),
@@ -781,8 +779,6 @@ def _rank_shows_from_events(
         group = stats_by_series.setdefault(key, {'plays': 0, 'watch_seconds': 0})
         group['plays'] += stats['plays']
         group['watch_seconds'] += stats['watch_seconds']
-    if episode_stats and not episodes:
-        raise RuntimeError('Playback Reporting episode IDs could not be resolved in Emby; existing export was left unchanged.')
     if not stats_by_series:
         return []
 
