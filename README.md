@@ -1,6 +1,6 @@
 # Emby Collection Manager — Library Export
 
-This is a customized Emby Collection Manager based on [Nebulas0/EmbyCollectionManager](https://github.com/Nebulas0/EmbyCollectionManager). It keeps the existing collection synchronization and adds optional, symlink-backed Emby libraries.
+This is a customized Emby Collection Manager based on [Nebulas0/EmbyCollectionManager](https://github.com/Nebulas0/EmbyCollectionManager). It keeps the existing collection synchronization and adds optional library exports, including Most Watched rankings.
 
 ## Features
 
@@ -11,7 +11,7 @@ This is a customized Emby Collection Manager based on [Nebulas0/EmbyCollectionMa
 - Creates movie links to the movie’s containing directory without assuming a file extension, including `.mkv`, `.mp4`, and `.strm`.
 - Links a TV series at its Series folder, preserving all seasons and episodes. If a collection contains episodes or seasons, the manager resolves their Emby `SeriesId` and links the series root once.
 - Reconciles symlinks on the normal sync interval and removes only links recorded in its own manifest. It never deletes the source media or automatically deletes an Emby library entry.
-- Optional Most Watched libraries use Playback Reporting data, with independent lookback days and top-item limits for movies and TV shows. Ranked posters show the item's position and NFO sort titles preserve the order.
+- Optional Most Watched libraries use Playback Reporting data, with independent lookback days and top-item limits for movies and TV shows. Choose symlinks or `.strm` pointers and select ranked poster/thumb images.
 
 The current Trakt and MDBList importers process movie lists. The exporter can handle Series/Episode/Season items already present in an Emby collection, but does not add TV-show list ingestion.
 
@@ -96,11 +96,24 @@ The Most Watched tab reads per-item playback events from Playback Reporting's `U
 
 Movies and TV shows each have their own enable switch, library selection, lookback period, and item limit. Both periods default to 14 days and both limits to 10 items; exports are disabled until opted in. If no source library selection has been saved yet, all matching movie or TV libraries are selected. The normal manager sync refreshes enabled lists; the tab's manual button runs the full sync.
 
-Most Watched creates a real symlink to each selected movie file and to each episode file under one ranked Series folder, preserving each source file's basename and extension (for example `.mkv` or `.mp4`). A TV entry is one Series folder containing its Season folders and episode symlinks. It adds local NFO sidecars and overlays the rank on the existing Emby poster, falling back to a read-only local poster sidecar when available. It never copies video data or modifies source media/artwork. The folder prefix and NFO sort title carry the rank so the list sorts in ascending order. Emby should sort the library by Name/Sort Name ascending; a client using a different sort order may need that changed. Regular collection exports keep their existing directory-symlink behavior.
+For Movies and TV Shows independently, choose either real media-file symlinks or HomeScreenCompanion-style `.strm` pointers. A pointer contains the original media path; it does not copy the video. TV output remains one ranked Series folder containing Season folders and episode files/pointers. The manager generates local NFOs and ranked poster and thumb/landscape images without changing source media or artwork. In STRM mode, indexed Movie and Series copies also receive a rank Sort Name update through the Emby API. Sort Name ascending is still required in the Emby client. Regular collection exports keep their existing directory-symlink behavior.
 
 When a title is no longer in the selected libraries' ranked results, the next sync prunes only its manifest-owned links and sidecars. Original media and Emby library entries are left untouched.
 
-The Most Watched tab has its own automatic-library checkbox. Until you save that option, it inherits the global **Automatically create the Emby library for opted-in collections** setting; after saving, it controls Most Watched independently. When off, ranked symlink folders are still maintained for manual setup. The manager never removes an Emby library entry automatically. On Emby 4.9, these are ordinary libraries; the manager does not create HomeScreenCompanion-style per-user Home Screen sections.
+The Most Watched tab has its own automatic-library checkbox. Until you save that option, it inherits the global **Automatically create the Emby library for opted-in collections** setting; after saving, it controls Most Watched independently. When off, ranked output folders are still maintained for manual setup. The manager never removes an Emby library entry automatically. These are ordinary Emby libraries; the manager does not create HomeScreenCompanion-style per-user Home Screen sections.
+
+### STRM playback helper plugin
+
+The optional `plugins/EmbyCollectionManagerStrmBridge` project is a lightweight Emby-side helper for `.strm` exports. It watches only library items beneath a Manager-owned `.most-watched-manifest.json`, associates the generated rank images and Sort Names, copies source episode runtime/stream metadata, and queues Emby's remote-content probe for movie `.strm` files. It does not modify source media.
+
+The helper uses Emby in-process plugin APIs because the public REST refresh endpoint does not expose the remote-content-probe option. Build it against the `system` assemblies from the exact Emby server you intend to use:
+
+```bash
+dotnet build plugins/EmbyCollectionManagerStrmBridge/EmbyCollectionManagerStrmBridge.csproj \
+  -c Release -p:EmbyServerPath=/path/to/Emby/system
+```
+
+Copy the resulting `bin/Release/netstandard2.0/EmbyCollectionManagerStrmBridge.dll` into Emby's plugin directory and restart Emby to load it. The checked-in source has been compiled against the available Emby 4.9.5 reference assemblies; it has not yet been installed or runtime-verified against Emby 4.10.1.0. Do not install it on a production server until it has been built and validated against that server's matching assemblies.
 
 ## Configuration and privacy
 
