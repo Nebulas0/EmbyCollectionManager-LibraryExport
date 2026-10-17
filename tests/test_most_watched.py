@@ -78,8 +78,14 @@ class MostWatchedSettingsTests(unittest.TestCase):
         self.assertEqual(
             normalize_most_watched_settings({}),
             {
-                'movies': {'enabled': False, 'days': 14, 'limit': 10, 'library_ids': None},
-                'tv_shows': {'enabled': False, 'days': 14, 'limit': 10, 'library_ids': None},
+                'movies': {
+                    'enabled': False, 'days': 14, 'limit': 10, 'library_ids': None,
+                    'output_mode': 'symlink', 'image_variants': ['poster', 'thumb'], 'badge_style': 'neutral',
+                },
+                'tv_shows': {
+                    'enabled': False, 'days': 14, 'limit': 10, 'library_ids': None,
+                    'output_mode': 'symlink', 'image_variants': ['poster', 'thumb'], 'badge_style': 'neutral',
+                },
             },
         )
         settings = normalize_most_watched_settings({
@@ -88,10 +94,32 @@ class MostWatchedSettingsTests(unittest.TestCase):
         })
         self.assertEqual(settings['movies'], {
             'enabled': True, 'days': 3650, 'limit': 1, 'library_ids': None,
+            'output_mode': 'symlink', 'image_variants': ['poster', 'thumb'], 'badge_style': 'neutral',
         })
         self.assertEqual(settings['tv_shows'], {
             'enabled': False, 'days': 14, 'limit': 100, 'library_ids': None,
+            'output_mode': 'symlink', 'image_variants': ['poster', 'thumb'], 'badge_style': 'neutral',
         })
+
+    def test_output_settings_are_validated(self):
+        settings = normalize_most_watched_settings({
+            'movies': {
+                'output_mode': 'STRM',
+                'image_variants': ['thumb', 'poster', 'thumb', 'unknown'],
+                'badge_style': 'ocean-blue',
+            },
+            'tv_shows': {
+                'output_mode': 'invalid',
+                'image_variants': [],
+                'badge_style': 'invalid',
+            },
+        })
+        self.assertEqual(settings['movies']['output_mode'], 'strm')
+        self.assertEqual(settings['movies']['image_variants'], ['thumb', 'poster'])
+        self.assertEqual(settings['movies']['badge_style'], 'ocean-blue')
+        self.assertEqual(settings['tv_shows']['output_mode'], 'symlink')
+        self.assertEqual(settings['tv_shows']['image_variants'], ['poster'])
+        self.assertEqual(settings['tv_shows']['badge_style'], 'neutral')
 
     def test_most_watched_library_creation_can_inherit_or_override_global_setting(self):
         self.assertTrue(should_create_most_watched_libraries({
@@ -139,8 +167,8 @@ class PlaybackReportingClientTests(unittest.TestCase):
             def __init__(self):
                 self.calls = []
 
-            def sync(self, kind, rows, create_emby_library):
-                self.calls.append((kind, rows, create_emby_library))
+            def sync(self, kind, rows, create_emby_library, **options):
+                self.calls.append((kind, rows, create_emby_library, options))
                 return {'library_name': 'Most Watched Movies-library', 'item_count': len(rows)}
 
         emby = FakeEmby()
@@ -216,6 +244,11 @@ class PlaybackReportingClientTests(unittest.TestCase):
         self.assertEqual(calls['movies'][1][0]['plays'], 8)
         self.assertFalse(calls['movies'][2])
         self.assertEqual(calls['tv_shows'][1], [])
+        self.assertEqual(calls['movies'][3], {
+            'output_mode': 'symlink',
+            'image_variants': ['poster', 'thumb'],
+            'badge_style': 'neutral',
+        })
         self.assertEqual(state['movies'][0]['plays'], 8)
         self.assertEqual(saved['movies'][0]['rank'], 1)
 
@@ -351,6 +384,113 @@ class MostWatchedLibraryExporterTests(unittest.TestCase):
         self.assertTrue(link.is_symlink())
         self.assertEqual(link.resolve(), movie_path)
 
+    def test_folder_and_sort_titles_are_zero_padded_for_top_100(self):
+        emby = FakeEmby()
+        exporter = self.make_exporter(emby)
+        movie_dir = self.media_root / 'movies' / 'Large Ranked Set'
+        movie_dir.mkdir(parents=True)
+        ranked = []
+        for rank in range(1, 101):
+            movie_path = movie_dir / f'Movie {rank:03d}.mp4'
+            movie_path.write_bytes(b'movie')
+            item = {
+                'Id': f'movie-{rank}',
+                'Type': 'Movie',
+                'Name': f'Movie {rank}',
+                'ProductionYear': 2020,
+                'Path': str(movie_path),
+            }
+            ranked.append({'item': item, 'name': item['Name'], 'plays': 101 - rank, 'watch_seconds': 60})
+
+        with patch.object(exporter, '_ranked_poster', return_value=b'poster'), patch.object(
+            exporter, '_ranked_thumb', return_value=b'thumb',
+        ):
+            planned_files, planned_links = exporter._movie_files(ranked)
+
+        self.assertIn('100 - Large Ranked Set/Movie 100.nfo', planned_files)
+        self.assertIn('<sorttitle>100 - Movie 100</sorttitle>', planned_files[
+            '100 - Large Ranked Set/Movie 100.nfo'
+        ].decode('utf-8'))
+        self.assertIn('100 - Large Ranked Set/Movie 100.mp4', planned_links)
+        self.assertIn('001 - Large Ranked Set/Movie 001.mp4', planned_links)
+
+    def test_ranked_movie_strm_points_to_original_and_writes_hsc_sidecars(self):
+        emby = FakeEmby()
+        exporter = self.make_exporter(emby)
+        movie_dir = self.media_root / 'movies' / 'Example Movie (2020)'
+        movie_dir.mkdir(parents=True)
+        movie_path = movie_dir / 'Example Movie (2020).mp4'
+        movie_path.write_bytes(b'original-mp4')
+        from PIL import Image
+        source_poster = movie_dir / 'poster.jpg'
+        Image.new('RGB', (80, 120), (10, 20, 220)).save(source_poster)
+        original_poster_bytes = source_poster.read_bytes()
+        item = {
+            'Id': 'strm-movie-id',
+            'Type': 'Movie',
+            'Name': 'Example Movie',
+            'ProductionYear': 2020,
+            'Path': str(movie_path),
+            'ProviderIds': {'Tmdb': '12345'},
+        }
+
+        result = exporter.sync(
+            'movies',
+            [{'item': item, 'name': item['Name'], 'plays': 3, 'watch_seconds': 6000}],
+            create_emby_library=False,
+            output_mode='strm',
+            image_variants=['poster', 'thumb'],
+            badge_style='emby-green',
+        )
+
+        output = Path(result['library_path'])
+        pointer = next(output.rglob('*.strm'))
+        self.assertFalse(pointer.is_symlink())
+        self.assertEqual(pointer.read_text(), str(movie_path))
+        self.assertTrue((pointer.parent / f'{pointer.stem}.nfo').is_file())
+        self.assertTrue((pointer.parent / f'{pointer.stem}.jpg').is_file())
+        self.assertTrue((pointer.parent / f'{pointer.stem}-thumb.jpg').is_file())
+        self.assertIn('<sorttitle>01 - Example Movie</sorttitle>', (pointer.parent / f'{pointer.stem}.nfo').read_text())
+        self.assertEqual(list(output.rglob('*.mp4')), [])
+        self.assertEqual(source_poster.read_bytes(), original_poster_bytes)
+        self.assertEqual(movie_path.read_bytes(), b'original-mp4')
+
+        exporter.sync('movies', [], create_emby_library=False, output_mode='strm')
+        self.assertFalse(pointer.exists())
+        self.assertTrue(movie_path.exists())
+
+    def test_switching_movie_output_modes_prunes_only_managed_pointer_or_link(self):
+        emby = FakeEmby()
+        exporter = self.make_exporter(emby)
+        movie_dir = self.media_root / 'movies' / 'Mode Switch (2021)'
+        movie_dir.mkdir(parents=True)
+        movie_path = movie_dir / 'Mode Switch.mp4'
+        movie_path.write_bytes(b'original')
+        item = {
+            'Id': 'mode-switch',
+            'Type': 'Movie',
+            'Name': 'Mode Switch',
+            'ProductionYear': 2021,
+            'Path': str(movie_path),
+        }
+        ranked = [{'item': item, 'name': item['Name'], 'plays': 1, 'watch_seconds': 60}]
+
+        first = exporter.sync('movies', ranked, create_emby_library=False, output_mode='symlink')
+        symlink = next(Path(first['library_path']).rglob('*.mp4'))
+        self.assertTrue(symlink.is_symlink())
+
+        second = exporter.sync('movies', ranked, create_emby_library=False, output_mode='strm')
+        pointer = next(Path(second['library_path']).rglob('*.strm'))
+        self.assertTrue(pointer.is_file())
+        self.assertFalse(symlink.exists())
+        self.assertTrue(movie_path.exists())
+
+        third = exporter.sync('movies', ranked, create_emby_library=False, output_mode='symlink')
+        replacement_link = next(Path(third['library_path']).rglob('*.mp4'))
+        self.assertTrue(replacement_link.is_symlink())
+        self.assertFalse(pointer.exists())
+        self.assertTrue(movie_path.exists())
+
     def test_ranked_show_contains_one_series_with_season_episode_symlinks(self):
         emby = FakeEmby()
         exporter = self.make_exporter(emby)
@@ -393,6 +533,54 @@ class MostWatchedLibraryExporterTests(unittest.TestCase):
         self.assertIn('Season 39', str(episode_pointer))
         self.assertTrue((show_folders[0] / 'poster.jpg').is_file())
         self.assertEqual(list(output.rglob('*.strm')), [])
+
+    def test_ranked_show_strm_mode_keeps_a_series_with_seasons_and_ranked_art(self):
+        emby = FakeEmby()
+        exporter = self.make_exporter(emby)
+        series_dir = self.media_root / 'television' / '20s' / 'Chief of War (2025)'
+        episode_path = series_dir / 'Season 01' / 'Chief of War S01E07.mkv'
+        episode_path.parent.mkdir(parents=True)
+        episode_path.write_bytes(b'episode')
+        emby.episodes = [{
+            'Id': 'chief-episode',
+            'Type': 'Episode',
+            'Name': 'Episode 7',
+            'Path': str(episode_path),
+            'ParentIndexNumber': 1,
+            'IndexNumber': 7,
+            'Overview': 'Episode synopsis',
+        }]
+        series = {
+            'Id': 'chief-series',
+            'Type': 'Series',
+            'Name': 'Chief of War',
+            'ProductionYear': 2025,
+            'Path': str(series_dir),
+            'ProviderIds': {'Tvdb': '418633'},
+        }
+
+        result = exporter.sync(
+            'tv_shows',
+            [{'item': series, 'name': series['Name'], 'plays': 5, 'watch_seconds': 18000}],
+            create_emby_library=False,
+            output_mode='strm',
+        )
+
+        output = Path(result['library_path'])
+        show_folders = [path for path in output.iterdir() if path.is_dir()]
+        self.assertEqual(len(show_folders), 1)
+        show_folder = show_folders[0]
+        self.assertTrue((show_folder / 'tvshow.nfo').is_file())
+        self.assertTrue((show_folder / 'poster.jpg').is_file())
+        self.assertTrue((show_folder / 'landscape.jpg').is_file())
+        self.assertIn('<sorttitle>01 - Chief of War</sorttitle>', (show_folder / 'tvshow.nfo').read_text())
+        pointer = next(show_folder.rglob('*.strm'))
+        self.assertEqual(pointer.read_text(), str(episode_path))
+        self.assertFalse(pointer.is_symlink())
+        self.assertIn('Season 01', str(pointer))
+        self.assertTrue(pointer.with_suffix('.nfo').is_file())
+        self.assertEqual(list(output.rglob('*.mkv')), [])
+        self.assertTrue(episode_path.exists())
 
 
 if __name__ == '__main__':

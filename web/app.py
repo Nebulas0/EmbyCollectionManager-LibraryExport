@@ -224,12 +224,18 @@ def most_watched():
                 'days': request.form.get('movies_days', 14),
                 'limit': request.form.get('movies_limit', 10),
                 'library_ids': request.form.getlist('movies_library_ids'),
+                'output_mode': request.form.get('movies_output_mode', 'symlink'),
+                'image_variants': request.form.getlist('movies_image_variants'),
+                'badge_style': request.form.get('movies_badge_style', 'neutral'),
             },
             'tv_shows': {
                 'enabled': request.form.get('tv_shows_enabled') == 'on',
                 'days': request.form.get('tv_shows_days', 14),
                 'limit': request.form.get('tv_shows_limit', 10),
                 'library_ids': request.form.getlist('tv_shows_library_ids'),
+                'output_mode': request.form.get('tv_shows_output_mode', 'symlink'),
+                'image_variants': request.form.getlist('tv_shows_image_variants'),
+                'badge_style': request.form.get('tv_shows_badge_style', 'neutral'),
             },
         }
         settings = normalize_most_watched_settings(submitted)

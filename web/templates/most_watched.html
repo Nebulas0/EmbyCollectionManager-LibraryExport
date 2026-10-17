@@ -33,7 +33,7 @@
                    {% if auto_create_emby_library %}checked{% endif %}>
             <span>Automatically create the Most Watched Emby libraries</span>
         </label>
-        <p class="mw-help">When off, the ranked symlink folders are still maintained for manual library setup. Existing Emby libraries are never removed. This Most Watched option is independent of the global collection-export setting.</p>
+        <p class="mw-help">When off, the ranked export folders are still maintained for manual library setup. Existing Emby libraries are never removed. This Most Watched option is independent of the global collection-export setting.</p>
     </section>
     <div class="mw-grid">
         {% for key, label in [('movies', 'Movies'), ('tv_shows', 'TV Shows')] %}
@@ -58,6 +58,48 @@
                            value="{{ section.get('limit', 10) }}" required>
                 </label>
             </div>
+            <div class="mw-fields mw-export-options">
+                <label>
+                    <span>Media output</span>
+                    <select name="{{ key }}_output_mode">
+                        <option value="symlink" {% if section.get('output_mode', 'symlink') == 'symlink' %}selected{% endif %}>Real media symlinks (current)</option>
+                        <option value="strm" {% if section.get('output_mode') == 'strm' %}selected{% endif %}>STRM pointers (HomeScreenCompanion-style)</option>
+                    </select>
+                </label>
+                <label>
+                    <span>Number badge style</span>
+                    <select name="{{ key }}_badge_style">
+                        {% for value, label in [
+                            ('neutral', 'Neutral'),
+                            ('slate-grey', 'Slate grey'),
+                            ('emby-green', 'Emby green'),
+                            ('ocean-blue', 'Ocean blue'),
+                            ('soft-red', 'Soft red'),
+                            ('violet', 'Violet'),
+                            ('none', 'No number')
+                        ] %}
+                        <option value="{{ value }}" {% if section.get('badge_style', 'neutral') == value %}selected{% endif %}>{{ label }}</option>
+                        {% endfor %}
+                    </select>
+                </label>
+            </div>
+            {% set selected_images = section.get('image_variants', ['poster', 'thumb']) %}
+            <div class="mw-image-variants">
+                <strong>Ranked image versions</strong>
+                <div>
+                    <label>
+                        <input type="checkbox" name="{{ key }}_image_variants" value="poster"
+                               {% if 'poster' in selected_images %}checked{% endif %}>
+                        <span>Poster</span>
+                    </label>
+                    <label>
+                        <input type="checkbox" name="{{ key }}_image_variants" value="thumb"
+                               {% if 'thumb' in selected_images %}checked{% endif %}>
+                        <span>Thumb / landscape</span>
+                    </label>
+                </div>
+                <p class="mw-help">The selected images are generated in the export folder; source artwork stays unchanged.</p>
+            </div>
             {% set selected_library_ids = section.get('library_ids') %}
             {% set library_options = movie_libraries if key == 'movies' else tv_libraries %}
             <div class="mw-library-selection">
@@ -78,7 +120,7 @@
                 <p class="mw-empty">No matching Emby libraries were found.</p>
                 {% endif %}
             </div>
-            <p class="mw-help">Ranks by play count; watch time breaks ties. Only playback from the selected libraries is counted. Users ignored in Playback Reporting are excluded.</p>
+            <p class="mw-help">Ranks by play count; watch time breaks ties. Only playback from the selected libraries is counted. Users ignored in Playback Reporting are excluded. STRM mode writes small path pointers, not video copies.</p>
         </section>
         {% endfor %}
     </div>
@@ -93,9 +135,9 @@
     <h2 style="margin-top:0;font-size:1.1rem">How the ranked libraries work</h2>
     <p>
         Playback events are matched by Emby item ID and restricted to the selected source libraries;
-        episode plays are grouped under their Series. Ranked entries use symlinks to the original media
-        files plus NFO sidecars and numbered posters generated from existing Emby/local artwork.
-        Source artwork is read only; no video data is copied.
+        episode plays are grouped under their Series. Choose real media symlinks or STRM path pointers.
+        NFOs and selected numbered poster/thumb images are generated in the ranked output folders;
+        source artwork stays read only and no video data is copied.
         Rank-prefixed folders and NFO sort titles keep the order. Emby should sort by Name/Sort Name
         ascending; clients using another sort order may need that changed. Regular collection exports
         continue to use their existing directory symlinks.
@@ -157,7 +199,11 @@
     .mw-toggle { display:flex; align-items:center; gap:8px; font-size:.92rem; }
     .mw-fields { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:14px; margin-top:18px; }
     .mw-fields label { display:flex; flex-direction:column; gap:7px; font-size:.88rem; }
-    .mw-fields input { border:1px solid #cbd5e1; border-radius:6px; padding:9px 10px; background:#fff; color:#17202a; }
+    .mw-fields input, .mw-fields select { border:1px solid #cbd5e1; border-radius:6px; padding:9px 10px; background:#fff; color:#17202a; }
+    .mw-image-variants { margin-top:14px; font-size:.88rem; }
+    .mw-image-variants > div { display:flex; gap:18px; flex-wrap:wrap; margin-top:8px; }
+    .mw-image-variants label { display:flex; align-items:center; gap:7px; }
+    .mw-image-variants p { margin:8px 0 0; }
     .mw-library-selection { margin-top:16px; font-size:.88rem; }
     .mw-library-list { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px 14px; max-height:180px; overflow-y:auto; margin-top:8px; padding:10px; border:1px solid #e5e7eb; border-radius:6px; }
     .mw-library-list label { display:flex; align-items:center; gap:7px; min-width:0; }

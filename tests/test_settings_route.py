@@ -76,20 +76,28 @@ class LibraryExportSettingsTests(unittest.TestCase):
                 'movies_days': '21',
                 'movies_limit': '12',
                 'movies_library_ids': 'movie-lib',
+                'movies_output_mode': 'strm',
+                'movies_image_variants': ['poster', 'thumb'],
+                'movies_badge_style': 'ocean-blue',
                 'most_watched_auto_create_emby_library': 'off',
                 'tv_shows_enabled': 'on',
                 'tv_shows_days': '14',
                 'tv_shows_limit': '8',
                 'tv_shows_library_ids': 'tv-lib',
+                'tv_shows_output_mode': 'symlink',
+                'tv_shows_image_variants': ['poster'],
+                'tv_shows_badge_style': 'soft-red',
             })
 
         self.assertEqual(response.status_code, 200)
         saved = yaml.safe_load(Path(web_app.CONFIG_PATH).read_text(encoding='utf-8'))
         self.assertEqual(saved['most_watched']['movies'], {
             'enabled': True, 'days': 21, 'limit': 12, 'library_ids': ['movie-lib'],
+            'output_mode': 'strm', 'image_variants': ['poster', 'thumb'], 'badge_style': 'ocean-blue',
         })
         self.assertEqual(saved['most_watched']['tv_shows'], {
             'enabled': True, 'days': 14, 'limit': 8, 'library_ids': ['tv-lib'],
+            'output_mode': 'symlink', 'image_variants': ['poster'], 'badge_style': 'soft-red',
         })
         self.assertFalse(saved['most_watched']['auto_create_emby_library'])
 
@@ -98,6 +106,8 @@ class LibraryExportSettingsTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertIn(b'Playback Reporting', response.data)
+        self.assertIn(b'STRM pointers (HomeScreenCompanion-style)', response.data)
+        self.assertIn(b'Thumb / landscape', response.data)
         self.assertIn(b'value="14"', response.data)
         self.assertIn(b'value="10"', response.data)
 

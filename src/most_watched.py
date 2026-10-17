@@ -21,8 +21,20 @@ from .library_export import (
 logger = logging.getLogger(__name__)
 
 DEFAULT_MOST_WATCHED_SETTINGS = {
-    'movies': {'enabled': False, 'days': 14, 'limit': 10, 'library_ids': None},
-    'tv_shows': {'enabled': False, 'days': 14, 'limit': 10, 'library_ids': None},
+    'movies': {
+        'enabled': False, 'days': 14, 'limit': 10, 'library_ids': None,
+        'output_mode': 'symlink', 'image_variants': ['poster', 'thumb'], 'badge_style': 'neutral',
+    },
+    'tv_shows': {
+        'enabled': False, 'days': 14, 'limit': 10, 'library_ids': None,
+        'output_mode': 'symlink', 'image_variants': ['poster', 'thumb'], 'badge_style': 'neutral',
+    },
+}
+
+MOST_WATCHED_OUTPUT_MODES = {'symlink', 'strm'}
+MOST_WATCHED_IMAGE_VARIANTS = {'poster', 'thumb'}
+MOST_WATCHED_BADGE_STYLES = {
+    'neutral', 'slate-grey', 'emby-green', 'ocean-blue', 'soft-red', 'violet', 'none',
 }
 
 STATE_FILE_NAME = 'most_watched_results.json'
@@ -61,11 +73,30 @@ def normalize_most_watched_settings(value: Any) -> Dict[str, Dict[str, Any]]:
             library_ids = list(dict.fromkeys(str(value) for value in raw_library_ids if value))
         else:
             library_ids = []
+        output_mode = str(section.get('output_mode', defaults['output_mode'])).lower()
+        if output_mode not in MOST_WATCHED_OUTPUT_MODES:
+            output_mode = defaults['output_mode']
+        raw_variants = section.get('image_variants', defaults['image_variants'])
+        if isinstance(raw_variants, (list, tuple, set)):
+            image_variants = [
+                variant for variant in dict.fromkeys(str(value).lower() for value in raw_variants)
+                if variant in MOST_WATCHED_IMAGE_VARIANTS
+            ]
+        else:
+            image_variants = list(defaults['image_variants'])
+        if not image_variants:
+            image_variants = ['poster']
+        badge_style = str(section.get('badge_style', defaults['badge_style'])).lower()
+        if badge_style not in MOST_WATCHED_BADGE_STYLES:
+            badge_style = defaults['badge_style']
         normalized[kind] = {
             'enabled': enabled,
             'days': max(1, min(days, 3650)),
             'limit': max(1, min(limit, 100)),
             'library_ids': library_ids,
+            'output_mode': output_mode,
+            'image_variants': image_variants,
+            'badge_style': badge_style,
         }
     return normalized
 
@@ -222,7 +253,7 @@ def _nfo_bytes(root_name: str, fields: List[Tuple[str, Any]]) -> bytes:
 
 
 class MostWatchedLibraryExporter:
-    """Create ranked libraries with managed symlinks without changing source media."""
+    """Create ranked libraries with managed media pointers and generated artwork."""
 
     _manifest_name = '.most-watched-manifest.json'
 
@@ -264,55 +295,90 @@ class MostWatchedLibraryExporter:
             return None
         return path if path.is_file() else None
 
-    def _ranked_poster(self, item: Dict[str, Any], rank: int) -> bytes:
+    def _ranked_image(
+        self,
+        item: Dict[str, Any],
+        rank: int,
+        badge_style: str = 'neutral',
+        image_variant: str = 'poster',
+    ) -> bytes:
         from PIL import Image, ImageDraw, ImageFont
 
         image_data = None
         item_id = item.get('Id')
         if item_id and hasattr(self.emby, 'get_item_image_bytes'):
-            image_data = self.emby.get_item_image_bytes(str(item_id), 'Primary')
+            image_types = ('Primary',) if image_variant == 'poster' else ('Thumb', 'Backdrop', 'Primary')
+            for image_type in image_types:
+                try:
+                    image_data = self.emby.get_item_image_bytes(str(item_id), image_type)
+                except Exception:
+                    image_data = None
+                if image_data:
+                    break
 
         try:
             image = Image.open(BytesIO(image_data)).convert('RGB') if image_data else None
         except Exception:
             image = None
         if image is None:
-            image = self._local_source_poster(item, Image)
+            image = self._local_source_image(item, Image, image_variant)
         if image is None:
-            image = Image.new('RGB', (600, 900), (30, 37, 43))
+            image = Image.new('RGB', (900, 506) if image_variant == 'thumb' else (600, 900), (30, 37, 43))
 
-        draw = ImageDraw.Draw(image)
-        badge = max(58, min(image.width, image.height) // 5)
-        margin = max(12, image.width // 28)
-        left, top = margin, margin
-        right, bottom = left + badge, top + badge
-        draw.rounded_rectangle(
-            (left, top, right, bottom),
-            radius=max(8, badge // 6),
-            fill=(206, 47, 47),
-            outline=(255, 255, 255),
-            width=max(2, badge // 24),
-        )
-        font_path = Path(__file__).resolve().parent.parent / 'resources' / 'fonts' / 'OpenSans-Bold.ttf'
-        font_size = max(24, int(badge * (0.48 if rank >= 10 else 0.58)))
-        try:
-            font = ImageFont.truetype(str(font_path), font_size)
-        except OSError:
-            font = ImageFont.load_default()
-        label = str(rank)
-        bounds = draw.textbbox((0, 0), label, font=font)
-        text_width, text_height = bounds[2] - bounds[0], bounds[3] - bounds[1]
-        draw.text(
-            (left + (badge - text_width) / 2, top + (badge - text_height) / 2 - bounds[1]),
-            label,
-            fill=(255, 255, 255),
-            font=font,
-        )
+        if badge_style != 'none':
+            badge_colors = {
+                'neutral': (0, 0, 0, 210),
+                'slate-grey': (65, 65, 75, 224),
+                'emby-green': (82, 181, 75, 200),
+                'ocean-blue': (46, 134, 193, 210),
+                'soft-red': (201, 69, 69, 210),
+                'violet': (123, 82, 181, 210),
+            }
+            badge_color = badge_colors.get(badge_style, badge_colors['neutral'])
+            overlay = Image.new('RGBA', image.size, (0, 0, 0, 0))
+            draw = ImageDraw.Draw(overlay)
+            short_side = min(image.width, image.height)
+            radius = max(28, int(short_side * 0.15))
+            margin = max(10, int(short_side * 0.04))
+            center_x, center_y = margin + radius, margin + radius
+            draw.ellipse(
+                (center_x - radius, center_y - radius, center_x + radius, center_y + radius),
+                fill=badge_color,
+            )
+            font_path = Path(__file__).resolve().parent.parent / 'resources' / 'fonts' / 'OpenSans-Bold.ttf'
+            font_size = max(20, int(radius * 1.1))
+            try:
+                font = ImageFont.truetype(str(font_path), font_size)
+            except OSError:
+                font = ImageFont.load_default()
+            label = str(rank)
+            while draw.textbbox((0, 0), label, font=font)[2] > radius * 1.5 and font_size > 8:
+                font_size -= 1
+                try:
+                    font = ImageFont.truetype(str(font_path), font_size)
+                except OSError:
+                    font = ImageFont.load_default()
+                    break
+            bounds = draw.textbbox((0, 0), label, font=font)
+            text_width, text_height = bounds[2] - bounds[0], bounds[3] - bounds[1]
+            draw.text(
+                (center_x - text_width / 2, center_y - text_height / 2 - bounds[1]),
+                label,
+                fill=(255, 255, 255),
+                font=font,
+            )
+            image = Image.alpha_composite(image.convert('RGBA'), overlay).convert('RGB')
         output = BytesIO()
         image.save(output, format='JPEG', quality=92)
         return output.getvalue()
 
-    def _local_source_poster(self, item: Dict[str, Any], image_module):
+    def _ranked_poster(self, item: Dict[str, Any], rank: int, badge_style: str = 'neutral') -> bytes:
+        return self._ranked_image(item, rank, badge_style, 'poster')
+
+    def _ranked_thumb(self, item: Dict[str, Any], rank: int, badge_style: str = 'neutral') -> bytes:
+        return self._ranked_image(item, rank, badge_style, 'thumb')
+
+    def _local_source_image(self, item: Dict[str, Any], image_module, image_variant: str):
         raw_path = item.get('Path')
         if not isinstance(raw_path, str) or not raw_path:
             return None
@@ -320,13 +386,18 @@ class MostWatchedLibraryExporter:
         if not any(_within(item_path, root) for root in self.media_mounts):
             return None
         directory = item_path if item_path.is_dir() else item_path.parent
-        names = ['poster.jpg', 'poster.png', 'folder.jpg', 'folder.png', 'cover.jpg', 'cover.png']
+        if image_variant == 'thumb':
+            names = [
+                'landscape.jpg', 'landscape.png', 'thumb.jpg', 'thumb.png',
+                'fanart.jpg', 'fanart.png', 'backdrop.jpg', 'backdrop.png',
+            ]
+        else:
+            names = ['poster.jpg', 'poster.png', 'folder.jpg', 'folder.png', 'cover.jpg', 'cover.png']
         if item_path.is_file():
-            names.extend([
-                f'{item_path.stem}-poster.jpg',
-                f'{item_path.stem}.jpg',
-                f'{item_path.stem}-poster.png',
-            ])
+            suffixes = ('-thumb.jpg', '-landscape.jpg', '-fanart.jpg', '-thumb.png') if image_variant == 'thumb' else (
+                '-poster.jpg', '.jpg', '-poster.png',
+            )
+            names.extend(f'{item_path.stem}{suffix}' for suffix in suffixes)
         for name in names:
             candidate = directory / name
             if not candidate.is_file():
@@ -336,10 +407,12 @@ class MostWatchedLibraryExporter:
                     return source.convert('RGB')
             except Exception:
                 continue
+        if image_variant == 'thumb':
+            return self._local_source_image(item, image_module, 'poster')
         return None
 
     @staticmethod
-    def _item_folder_name(item: Dict[str, Any], rank: int, is_series: bool = False) -> str:
+    def _item_folder_name(item: Dict[str, Any], rank: int, is_series: bool = False, digits: int = 2) -> str:
         path = item.get('Path')
         if isinstance(path, str) and path:
             source_path = Path(path)
@@ -351,11 +424,18 @@ class MostWatchedLibraryExporter:
             year = item.get('ProductionYear')
             if year:
                 source_name += f' ({year})'
-        return f'{rank:02d} - {_safe_component(source_name)}'
+        return f'{rank:0{max(2, digits)}d} - {_safe_component(source_name)}'
 
-    def _movie_files(self, ranked_items: List[Dict[str, Any]]) -> Tuple[Dict[str, bytes], Dict[str, str]]:
+    def _movie_files(
+        self,
+        ranked_items: List[Dict[str, Any]],
+        output_mode: str = 'symlink',
+        image_variants: Optional[List[str]] = None,
+        badge_style: str = 'neutral',
+    ) -> Tuple[Dict[str, bytes], Dict[str, str]]:
         planned_files: Dict[str, bytes] = {}
         planned_links: Dict[str, str] = {}
+        image_variants = image_variants or ['poster', 'thumb']
         valid_items = []
         for entry in ranked_items:
             source = self._source_file(entry.get('item', {}).get('Path'))
@@ -365,7 +445,7 @@ class MostWatchedLibraryExporter:
         for index, (entry, source) in enumerate(valid_items, 1):
             item = entry['item']
             rank = index
-            folder = self._item_folder_name(item, rank)
+            folder = self._item_folder_name(item, rank, digits=digits)
             folder_rel = Path(folder)
             media_name = _safe_component(source.stem) + source.suffix
             base_name = Path(media_name).stem
@@ -381,14 +461,29 @@ class MostWatchedLibraryExporter:
                 ('tvdbid', _provider_id(item, 'Tvdb')),
                 ('lockedfields', 'SortName|Images'),
             ]
-            planned_links[str(folder_rel / media_name)] = str(source)
             planned_files[str(folder_rel / f'{base_name}.nfo')] = _nfo_bytes('movie', fields)
-            planned_files[str(folder_rel / 'poster.jpg')] = self._ranked_poster(item, rank)
+            if 'poster' in image_variants:
+                image_name = f'{base_name}.jpg' if output_mode == 'strm' else 'poster.jpg'
+                planned_files[str(folder_rel / image_name)] = self._ranked_poster(item, rank, badge_style)
+            if 'thumb' in image_variants:
+                image_name = f'{base_name}-thumb.jpg' if output_mode == 'strm' else 'landscape.jpg'
+                planned_files[str(folder_rel / image_name)] = self._ranked_thumb(item, rank, badge_style)
+            if output_mode == 'strm':
+                planned_files[str(folder_rel / f'{base_name}.strm')] = str(source).encode('utf-8')
+            else:
+                planned_links[str(folder_rel / media_name)] = str(source)
         return planned_files, planned_links
 
-    def _tv_files(self, ranked_items: List[Dict[str, Any]]) -> Tuple[Dict[str, bytes], Dict[str, str]]:
+    def _tv_files(
+        self,
+        ranked_items: List[Dict[str, Any]],
+        output_mode: str = 'symlink',
+        image_variants: Optional[List[str]] = None,
+        badge_style: str = 'neutral',
+    ) -> Tuple[Dict[str, bytes], Dict[str, str]]:
         planned_files: Dict[str, bytes] = {}
         planned_links: Dict[str, str] = {}
+        image_variants = image_variants or ['poster', 'thumb']
         valid_items = []
         for entry in ranked_items:
             series_id = entry.get('item', {}).get('Id')
@@ -410,7 +505,7 @@ class MostWatchedLibraryExporter:
         digits = max(2, len(str(max(1, len(valid_items)))))
         for index, (entry, episodes) in enumerate(valid_items, 1):
             series = entry['item']
-            folder = self._item_folder_name(series, index, is_series=True)
+            folder = self._item_folder_name(series, index, is_series=True, digits=digits)
             series_rel = Path(folder)
             sort_title = f'{index:0{digits}d} - {series.get("Name", folder)}'
             tv_fields = [
@@ -442,7 +537,10 @@ class MostWatchedLibraryExporter:
                 continue
 
             planned_files[str(series_rel / 'tvshow.nfo')] = _nfo_bytes('tvshow', tv_fields)
-            planned_files[str(series_rel / 'poster.jpg')] = self._ranked_poster(series, index)
+            if 'poster' in image_variants:
+                planned_files[str(series_rel / 'poster.jpg')] = self._ranked_poster(series, index, badge_style)
+            if 'thumb' in image_variants:
+                planned_files[str(series_rel / 'landscape.jpg')] = self._ranked_thumb(series, index, badge_style)
             season_numbers = sorted({season for _, _, season, _ in series_episodes})
             for season in season_numbers:
                 season_dir = Path('Specials') if season == 0 else Path(f'Season {season:02d}')
@@ -452,7 +550,8 @@ class MostWatchedLibraryExporter:
                 )
             for episode, source, season, number in series_episodes:
                 season_dir = Path('Specials') if season == 0 else Path(f'Season {season:02d}')
-                link_name = _safe_component(source.stem) + source.suffix
+                media_name = _safe_component(source.stem) + source.suffix
+                link_name = f'{Path(media_name).stem}.strm' if output_mode == 'strm' else media_name
                 episode_fields = [
                     ('title', episode.get('Name')),
                     ('season', season),
@@ -463,11 +562,14 @@ class MostWatchedLibraryExporter:
                     ('tmdbid', _provider_id(episode, 'Tmdb')),
                     ('tvdbid', _provider_id(episode, 'Tvdb')),
                 ]
-                planned_links[str(series_rel / season_dir / link_name)] = str(source)
                 planned_files[str(series_rel / season_dir / f'{Path(link_name).stem}.nfo')] = _nfo_bytes(
                     'episodedetails',
                     episode_fields,
                 )
+                if output_mode == 'strm':
+                    planned_files[str(series_rel / season_dir / link_name)] = str(source).encode('utf-8')
+                else:
+                    planned_links[str(series_rel / season_dir / link_name)] = str(source)
         return planned_files, planned_links
 
     def _library_dir(self, kind: str) -> Tuple[str, str, Path]:
@@ -631,12 +733,34 @@ class MostWatchedLibraryExporter:
         os.replace(staged_manifest_path, manifest_path)
         return library_dir, changed, bool(planned_files or planned_links)
 
-    def sync(self, kind: str, ranked_items: List[Dict[str, Any]], create_emby_library: bool) -> Dict[str, Any]:
+    def sync(
+        self,
+        kind: str,
+        ranked_items: List[Dict[str, Any]],
+        create_emby_library: bool,
+        output_mode: str = 'symlink',
+        image_variants: Optional[List[str]] = None,
+        badge_style: str = 'neutral',
+    ) -> Dict[str, Any]:
+        output_mode = str(output_mode).lower()
+        if output_mode not in MOST_WATCHED_OUTPUT_MODES:
+            raise ValueError(f'Unsupported Most Watched output mode: {output_mode}')
+        image_variants = [
+            value for value in dict.fromkeys(str(value).lower() for value in (image_variants or ['poster', 'thumb']))
+            if value in MOST_WATCHED_IMAGE_VARIANTS
+        ] or ['poster']
+        badge_style = str(badge_style).lower()
+        if badge_style not in MOST_WATCHED_BADGE_STYLES:
+            badge_style = 'neutral'
         library_name, collection_type, _ = self._library_dir(kind)
         if kind == 'movies':
-            planned_files, planned_links = self._movie_files(ranked_items)
+            planned_files, planned_links = self._movie_files(
+                ranked_items, output_mode, image_variants, badge_style,
+            )
         else:
-            planned_files, planned_links = self._tv_files(ranked_items)
+            planned_files, planned_links = self._tv_files(
+                ranked_items, output_mode, image_variants, badge_style,
+            )
         if ranked_items and not planned_files and not planned_links:
             raise RuntimeError(f'No accessible media was found for the {kind.replace("_", " ")} Top List')
         library_dir, changed, has_files = self._reconcile_files(kind, planned_files, planned_links)
@@ -883,7 +1007,14 @@ def sync_most_watched(emby_client, config: Dict[str, Any], state_dir: str) -> Di
                 ranked = _rank_movies_from_events(events, emby_client, library_roots, section['limit'])
             else:
                 ranked = _rank_shows_from_events(events, emby_client, library_roots, section['limit'])
-            export_result = exporter.sync(kind, ranked, create_emby_library=auto_create)
+            export_result = exporter.sync(
+                kind,
+                ranked,
+                create_emby_library=auto_create,
+                output_mode=section['output_mode'],
+                image_variants=section['image_variants'],
+                badge_style=section['badge_style'],
+            )
             state[output_key] = [
                 {
                     'rank': index,
