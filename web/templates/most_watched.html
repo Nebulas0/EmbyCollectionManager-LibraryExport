@@ -113,6 +113,9 @@
                     {% endfor %}
                 </select>
                 <small class="mw-help">Select an existing Movies/TV library whose single folder is inside the configured export root. The manager writes its ranked files there and refreshes only that library. If blank, the current default folder/library name is used.</small>
+                {% if not target_library_options %}
+                <small class="mw-help">No eligible existing output library was found. Create the target library on a dedicated folder inside the configured export root, or leave the default selected.</small>
+                {% endif %}
             </label>
             {% set selected_library_ids = section.get('library_ids') %}
             {% set library_options = movie_libraries if key == 'movies' else tv_libraries %}
