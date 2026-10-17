@@ -23,6 +23,7 @@ class OrderedCollectionClient(EmptyCollectionClient):
     def __init__(self):
         super().__init__()
         self.sort_name = None
+        self.item_sort = None
         self.get_library_item_ids_by_tmdb_ids = lambda tmdb_ids, library_ids: ['old', 'new']
 
     def sort_item_ids_by_year(self, item_ids):
@@ -30,6 +31,10 @@ class OrderedCollectionClient(EmptyCollectionClient):
 
     def update_collection_sort_name(self, collection_id, sort_name, collection_name):
         self.sort_name = (collection_id, sort_name, collection_name)
+        return True
+
+    def update_collection_item_sort(self, collection_id):
+        self.item_sort = collection_id
         return True
 
 
@@ -57,6 +62,7 @@ class SyncCollectionTests(unittest.TestCase):
 
         self.assertEqual(client.updated, [('collection-id', ['new', 'old'])])
         self.assertEqual(client.sort_name, ('collection-id', '0000000001 Christmas', 'Christmas'))
+        self.assertEqual(client.item_sort, 'collection-id')
 
     def test_settings_can_skip_automatic_emby_library_creation(self):
         emby = EmptyCollectionClient()

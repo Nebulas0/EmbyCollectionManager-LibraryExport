@@ -726,6 +726,7 @@ def _sync_collection(
     """
     logger.info(f"  Syncing collection '{collection_name}' on {server_client.__class__.__name__}")
     set_sort_name = getattr(server_client, 'update_collection_sort_name', None)
+    set_item_sort = getattr(server_client, 'update_collection_item_sort', None)
     try:
         collection_id = server_client.get_or_create_collection(collection_name)
         if not collection_id:
@@ -739,6 +740,8 @@ def _sync_collection(
                 server_client.update_collection_items(collection_id, [])
             if callable(set_sort_name):
                 set_sort_name(collection_id, sort_name or collection_name, collection_name)
+            if callable(set_item_sort):
+                set_item_sort(collection_id)
             return collection_id  # Still return the ID for artwork updates
         
         # Ensure no duplicate item IDs
@@ -754,6 +757,8 @@ def _sync_collection(
             logger.info(f"    Updated collection '{collection_name}' with {len(unique_item_ids)} unique items")
             if callable(set_sort_name):
                 set_sort_name(collection_id, sort_name or collection_name, collection_name)
+            if callable(set_item_sort):
+                set_item_sort(collection_id)
         else:
             logger.error(f"    Failed to update collection '{collection_name}'.")            
         return collection_id

@@ -84,7 +84,7 @@ Edit a recipe in the Collections tab and enable **Seasonal collection** to give 
 
 Outside an enabled season, the next manager sync removes the matching Emby BoxSet collection and clears only its manifest-owned symlink exports. The manager verifies that the Emby item is a pathless BoxSet before deleting it; it does not delete movie files, other media, or any Emby library entry. Seasonal scheduling is off by default.
 
-For manager-synced collections, item IDs are submitted to Emby in descending release-year order, using premiere date to break ties. The manager sets non-seasonal collections' Sort Name to their name. Active seasonal collections get a hidden, timestamp-based Sort Name so the most recently updated seasonal collection sorts first. In Emby, use **Sort Name ascending** for that outer collection order. A client can apply its own item sort, so select release date/year descending there if it overrides the submitted order.
+For manager-synced collections, item IDs are submitted to Emby in descending release-year order, using premiere date to break ties. The manager also sets the configured user's **Emby Web** display preference for each collection to Production Year descending, while preserving other custom view preferences. Other Emby clients/users have separate display preferences and may need the same sort selected in their client. The manager sets non-seasonal collections' Sort Name to their name. Active seasonal collections get a hidden, timestamp-based Sort Name so the most recently updated seasonal collection sorts first. In Emby, use **Sort Name ascending** for that outer collection order.
 
 ## Most Watched libraries
 

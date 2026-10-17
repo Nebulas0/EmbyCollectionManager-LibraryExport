@@ -332,6 +332,59 @@ class EmbyClient(MediaServerClient):
             logger.warning("Could not update Sort Name for collection %s: %s", collection_id, exc)
         return False
 
+    def update_collection_item_sort(
+        self,
+        collection_id: str,
+        client: str = 'Emby Web',
+        sort_by: str = 'ProductionYear',
+        sort_order: str = 'Descending',
+    ) -> bool:
+        if not collection_id or not self.user_id or not client:
+            return False
+        if hasattr(self, '_temp_collections') and collection_id in self._temp_collections:
+            return True
+        url = f'{self.server_url}/DisplayPreferences/{collection_id}'
+        params = {'UserId': self.user_id, 'Client': client}
+        try:
+            current_response = self.session.get(url, params=params, timeout=15)
+            current = {}
+            if current_response.status_code == 200:
+                current_data = current_response.json()
+                if isinstance(current_data, dict):
+                    current = current_data
+            if (
+                current.get('SortBy') == sort_by
+                and current.get('SortOrder') == sort_order
+            ):
+                return True
+            payload = {
+                'Id': current.get('Id') or str(collection_id),
+                'Client': client,
+                'SortBy': sort_by,
+                'SortOrder': sort_order,
+                'CustomPrefs': current.get('CustomPrefs') or {},
+            }
+            response = self.session.post(
+                url,
+                params={'UserId': self.user_id},
+                json=payload,
+                timeout=20,
+            )
+            if response.status_code in (200, 204):
+                return True
+            logger.warning(
+                "Emby could not set collection item sorting for %s (HTTP %s)",
+                collection_id,
+                response.status_code,
+            )
+        except (requests.RequestException, ValueError) as exc:
+            logger.warning(
+                "Could not set collection item sorting for %s: %s",
+                collection_id,
+                exc,
+            )
+        return False
+
     def delete_collection(self, collection_id: str) -> bool:
         if not collection_id:
             return False

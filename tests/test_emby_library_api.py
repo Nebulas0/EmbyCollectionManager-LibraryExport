@@ -94,13 +94,45 @@ class EmbyLibraryApiTests(unittest.TestCase):
                 'Christmas',
             )
         )
-
         self.client.session.post.assert_called_once_with(
             'http://emby.invalid/Items/box-id',
             json={
                 'Id': 'box-id',
                 'Name': 'Christmas',
                 'SortName': '0000000001 Christmas',
+            },
+            timeout=20,
+        )
+
+    def test_collection_item_sort_is_saved_per_user_client_and_preserves_custom_prefs(self):
+        self.client.session.get = Mock(return_value=Mock(
+            status_code=200,
+            json=Mock(return_value={
+                'Id': 'box-id',
+                'Client': 'Emby Web',
+                'SortBy': 'SortName',
+                'SortOrder': 'Ascending',
+                'CustomPrefs': {'view': 'poster'},
+            }),
+        ))
+        self.client.session.post = Mock(return_value=Mock(status_code=204))
+
+        self.assertTrue(self.client.update_collection_item_sort('box-id'))
+
+        self.client.session.get.assert_called_once_with(
+            'http://emby.invalid/DisplayPreferences/box-id',
+            params={'UserId': 'user', 'Client': 'Emby Web'},
+            timeout=15,
+        )
+        self.client.session.post.assert_called_once_with(
+            'http://emby.invalid/DisplayPreferences/box-id',
+            params={'UserId': 'user'},
+            json={
+                'Id': 'box-id',
+                'Client': 'Emby Web',
+                'SortBy': 'ProductionYear',
+                'SortOrder': 'Descending',
+                'CustomPrefs': {'view': 'poster'},
             },
             timeout=20,
         )
