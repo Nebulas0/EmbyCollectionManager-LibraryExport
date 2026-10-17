@@ -284,7 +284,20 @@ namespace EmbyCollectionManagerStrmBridge
             if (item is Movie || item is Episode)
                 return !string.IsNullOrEmpty(item.Path) &&
                        item.Path.EndsWith(".strm", StringComparison.OrdinalIgnoreCase);
-            return item is Series && !string.IsNullOrEmpty(item.Path);
+            if (item is Series &&
+                !string.IsNullOrEmpty(item.Path) &&
+                TryFindLibraryRoot(item.Path, out _))
+            {
+                try
+                {
+                    return Directory.EnumerateFiles(item.Path, "*.strm", SearchOption.AllDirectories).Any();
+                }
+                catch
+                {
+                    return false;
+                }
+            }
+            return false;
         }
 
         private static bool IsManagerStrmCopy(BaseItem item)

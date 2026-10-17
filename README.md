@@ -104,7 +104,7 @@ The Most Watched tab has its own automatic-library checkbox. Until you save that
 
 ### STRM playback helper plugin
 
-The optional `plugins/EmbyCollectionManagerStrmBridge` project is a lightweight Emby-side helper for `.strm` exports. It watches only library items beneath a Manager-owned `.most-watched-manifest.json`, associates the generated rank images and Sort Names, copies source episode runtime/stream metadata, and queues Emby's remote-content probe for movie `.strm` files. It does not modify source media.
+The optional `plugins/EmbyCollectionManagerStrmBridge` project is a lightweight Emby-side helper for `.strm` exports. It watches only Manager-owned Most Watched `.strm` items (symlink-only exports are ignored), associates the generated rank images and Sort Names, copies source episode runtime/stream metadata, and queues Emby's remote-content probe for movie `.strm` files. It does not modify source media.
 
 The helper uses Emby in-process plugin APIs because the public REST refresh endpoint does not expose the remote-content-probe option. Build it against the `system` assemblies from the exact Emby server you intend to use:
 
