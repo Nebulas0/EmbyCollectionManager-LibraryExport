@@ -274,6 +274,37 @@ class EmbyClient(MediaServerClient):
             items.extend(data['Items'])
         return items
 
+    def get_items_in_library(
+        self,
+        library_id: str,
+        include_item_types: Optional[List[str]] = None,
+    ) -> Optional[List[Dict[str, Any]]]:
+        if not library_id:
+            return None
+        endpoint = f"/Users/{self.user_id}/Items"
+        items = []
+        start_index = 0
+        limit = 500
+        while True:
+            params = {
+                'ParentId': library_id,
+                'Recursive': 'true',
+                'Fields': 'Path,SortName,Type',
+                'StartIndex': start_index,
+                'Limit': limit,
+            }
+            if include_item_types:
+                params['IncludeItemTypes'] = ','.join(include_item_types)
+            data = self._make_api_request('GET', endpoint, params=params)
+            if not isinstance(data, dict) or not isinstance(data.get('Items'), list):
+                return None
+            page = data['Items']
+            items.extend(page)
+            start_index += len(page)
+            total = data.get('TotalRecordCount')
+            if not page or (total is not None and start_index >= total) or (total is None and len(page) < limit):
+                return items
+
     def sort_item_ids_by_year(self, item_ids: List[str]) -> List[str]:
         ids = list(dict.fromkeys(str(item_id) for item_id in item_ids if item_id))
         if len(ids) < 2:
@@ -346,6 +377,48 @@ class EmbyClient(MediaServerClient):
             )
         except requests.RequestException as exc:
             logger.warning("Could not update Sort Name for collection %s: %s", collection_id, exc)
+        return False
+
+    def update_item_sort_name(
+        self,
+        item_id: str,
+        sort_name: str,
+        expected_path: str,
+    ) -> bool:
+        if not item_id or not sort_name or not expected_path:
+            return False
+        try:
+            payload = self._make_api_request(
+                'GET',
+                f'/Users/{self.user_id}/Items/{item_id}',
+            )
+            if not isinstance(payload, dict) or payload.get('Type') not in {'Movie', 'Series'}:
+                logger.warning("Refusing Sort Name update for non-movie/series item %s", item_id)
+                return False
+            actual_path = payload.get('Path')
+            if not isinstance(actual_path, str) or os.path.normcase(os.path.abspath(actual_path)) != os.path.normcase(
+                os.path.abspath(expected_path)
+            ):
+                logger.warning("Refusing Sort Name update for item %s outside its expected STRM path", item_id)
+                return False
+            if payload.get('SortName') == sort_name:
+                return True
+
+            payload['SortName'] = sort_name
+            response = self.session.post(
+                f'{self.server_url}/Items/{item_id}',
+                json=payload,
+                timeout=20,
+            )
+            if response.status_code in (200, 204):
+                return True
+            logger.warning(
+                "Emby could not set Sort Name for STRM item %s (HTTP %s)",
+                item_id,
+                response.status_code,
+            )
+        except requests.RequestException as exc:
+            logger.warning("Could not update Sort Name for STRM item %s: %s", item_id, exc)
         return False
 
     def update_collection_item_sort(

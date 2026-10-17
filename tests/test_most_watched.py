@@ -48,6 +48,8 @@ class FakeEmby:
         self.created_libraries = []
         self.refreshed = []
         self.refreshed_by_name = []
+        self.library_items = []
+        self.sort_name_updates = []
 
     def get_series_episodes(self, series_id):
         return self.episodes
@@ -57,6 +59,16 @@ class FakeEmby:
 
     def get_items_by_ids(self, item_ids):
         return [self.items[str(item_id)] for item_id in item_ids if str(item_id) in self.items]
+
+    def get_items_in_library(self, library_id, include_item_types=None):
+        return [
+            item for item in self.library_items
+            if include_item_types is None or item.get('Type') in include_item_types
+        ]
+
+    def update_item_sort_name(self, item_id, sort_name, expected_path):
+        self.sort_name_updates.append((item_id, sort_name, expected_path))
+        return True
 
     def get_item_image_bytes(self, item_id, image_type='Primary'):
         return None
@@ -465,6 +477,44 @@ class MostWatchedLibraryExporterTests(unittest.TestCase):
 
         exporter.sync('movies', [], create_emby_library=False, output_mode='strm')
         self.assertFalse(pointer.exists())
+        self.assertTrue(movie_path.exists())
+
+    def test_strm_sync_sets_rank_sort_name_on_only_the_indexed_copy(self):
+        emby = FakeEmby()
+        exporter = self.make_exporter(emby)
+        movie_dir = self.media_root / 'movies' / 'Sort Me Movie (2021)'
+        movie_dir.mkdir(parents=True)
+        movie_path = movie_dir / 'Sort Me Movie.mkv'
+        movie_path.write_bytes(b'original')
+        expected_strm = (
+            self.output_root / 'Most Watched Movies-library'
+            / '01 - Sort Me Movie (2021)' / 'Sort Me Movie.strm'
+        )
+        emby.library_items = [{
+            'Id': 'strm-copy-id',
+            'Type': 'Movie',
+            'Path': str(expected_strm),
+            'SortName': 'Sort Me Movie',
+        }]
+        item = {
+            'Id': 'source-movie-id',
+            'Type': 'Movie',
+            'Name': 'Sort Me Movie',
+            'ProductionYear': 2021,
+            'Path': str(movie_path),
+        }
+
+        exporter.sync(
+            'movies',
+            [{'item': item, 'name': item['Name'], 'plays': 1, 'watch_seconds': 60}],
+            create_emby_library=True,
+            output_mode='strm',
+        )
+
+        self.assertEqual(
+            emby.sort_name_updates,
+            [('strm-copy-id', '01', str(expected_strm))],
+        )
         self.assertTrue(movie_path.exists())
 
     def test_same_content_generated_file_permissions_are_repaired(self):

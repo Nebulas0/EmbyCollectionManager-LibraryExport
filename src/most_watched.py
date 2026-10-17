@@ -5,6 +5,7 @@ import os
 import re
 import stat
 import tempfile
+import time
 import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 from io import BytesIO
@@ -583,6 +584,84 @@ class MostWatchedLibraryExporter:
         return library_name, collection_type, library_dir
 
     @staticmethod
+    def _path_key(path: str) -> str:
+        return os.path.normcase(os.path.abspath(path))
+
+    def _find_library_id(self, library_name: str, library_dir: Path) -> Optional[str]:
+        if not hasattr(self.emby, 'get_libraries'):
+            return None
+        expected = self._path_key(str(library_dir))
+        for library in self.emby.get_libraries() or []:
+            locations = library.get('Locations') or []
+            if library.get('Name') == library_name and any(
+                isinstance(location, str) and self._path_key(location) == expected
+                for location in locations
+            ):
+                library_id = library.get('Id')
+                return str(library_id) if library_id else None
+        return None
+
+    def _strm_sort_targets(
+        self,
+        kind: str,
+        library_dir: Path,
+        planned_files: Dict[str, bytes],
+    ) -> Dict[str, str]:
+        targets = {}
+        for relative in planned_files:
+            path = Path(relative)
+            if kind == 'movies' and path.suffix.lower() != '.strm':
+                continue
+            if kind == 'tv_shows' and path.name != 'tvshow.nfo':
+                continue
+            rank = path.parts[0].split(' - ', 1)[0] if path.parts else ''
+            if not rank.isdigit():
+                continue
+            item_path = library_dir / (path if kind == 'movies' else path.parent)
+            targets[str(item_path)] = rank
+        return targets
+
+    def _apply_strm_sort_names(
+        self,
+        kind: str,
+        library_id: str,
+        library_dir: Path,
+        planned_files: Dict[str, bytes],
+    ) -> None:
+        if not hasattr(self.emby, 'get_items_in_library') or not hasattr(self.emby, 'update_item_sort_name'):
+            return
+        targets = self._strm_sort_targets(kind, library_dir, planned_files)
+        if not targets:
+            return
+
+        item_type = 'Movie' if kind == 'movies' else 'Series'
+        expected_keys = {self._path_key(path): (path, sort_name) for path, sort_name in targets.items()}
+        indexed = {}
+        for attempt in range(5):
+            items = self.emby.get_items_in_library(library_id, [item_type])
+            if items is None:
+                logger.warning("Could not read indexed %s STRM items from Most Watched library", kind)
+                return
+            indexed = {
+                self._path_key(item['Path']): item
+                for item in items
+                if isinstance(item.get('Path'), str) and item.get('Type') == item_type
+            }
+            if expected_keys.keys() <= indexed.keys() or attempt == 4:
+                break
+            time.sleep(1)
+
+        for path_key, (expected_path, sort_name) in expected_keys.items():
+            item = indexed.get(path_key)
+            if not item:
+                logger.debug("Most Watched STRM item is not indexed yet: %s", expected_path)
+                continue
+            if item.get('SortName') == sort_name:
+                continue
+            if not self.emby.update_item_sort_name(str(item.get('Id') or ''), sort_name, expected_path):
+                logger.warning("Could not set rank Sort Name for Most Watched STRM item %s", expected_path)
+
+    @staticmethod
     def _load_manifest(path: Path) -> Tuple[Dict[str, str], Dict[str, str]]:
         if path.is_symlink():
             raise ValueError('Most Watched ownership manifest must not be a symlink')
@@ -780,6 +859,10 @@ class MostWatchedLibraryExporter:
             self.emby.refresh_library(library_id)
         elif changed:
             self.emby.refresh_library_by_name(library_name, str(library_dir))
+        if output_mode == 'strm' and ranked_items:
+            library_id = library_id or self._find_library_id(library_name, library_dir)
+            if library_id:
+                self._apply_strm_sort_names(kind, library_id, library_dir, planned_files)
         return {
             'library_name': library_name,
             'library_path': str(library_dir),

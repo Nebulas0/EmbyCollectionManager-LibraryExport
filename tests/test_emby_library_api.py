@@ -89,6 +89,47 @@ class EmbyLibraryApiTests(unittest.TestCase):
         self.assertEqual(items[0]['Id'], '2328102')
         self.assertEqual(self.client._make_api_request.call_args.kwargs['params']['Ids'], '2328102')
 
+    def test_library_items_are_paginated_and_can_filter_item_type(self):
+        self.client._make_api_request = Mock(side_effect=[
+            {'Items': [{'Id': 'one', 'Type': 'Movie'}], 'TotalRecordCount': 2},
+            {'Items': [{'Id': 'two', 'Type': 'Movie'}], 'TotalRecordCount': 2},
+        ])
+
+        items = self.client.get_items_in_library('library-id', ['Movie'])
+
+        self.assertEqual([item['Id'] for item in items], ['one', 'two'])
+        self.assertEqual(self.client._make_api_request.call_count, 2)
+        self.assertEqual(
+            self.client._make_api_request.call_args_list[0].kwargs['params']['IncludeItemTypes'],
+            'Movie',
+        )
+        self.assertEqual(
+            self.client._make_api_request.call_args_list[1].kwargs['params']['StartIndex'],
+            1,
+        )
+
+    def test_strm_sort_name_update_preserves_full_item_and_checks_output_path(self):
+        output_path = '/exports/Most Watched/01 - Movie/Movie.strm'
+        self.client._make_api_request = Mock(return_value={
+            'Id': 'strm-id',
+            'Type': 'Movie',
+            'Path': output_path,
+            'Name': 'Movie',
+            'Overview': 'Keep existing metadata',
+            'SortName': 'Movie',
+        })
+        self.client.session.post = Mock(return_value=Mock(status_code=204))
+
+        self.assertTrue(self.client.update_item_sort_name('strm-id', '01', output_path))
+        payload = self.client.session.post.call_args.kwargs['json']
+        self.assertEqual(payload['SortName'], '01')
+        self.assertEqual(payload['Overview'], 'Keep existing metadata')
+
+        self.client._make_api_request.return_value['Path'] = '/mnt/unionfs/movies/Movie.mkv'
+        self.client.session.post.reset_mock()
+        self.assertFalse(self.client.update_item_sort_name('strm-id', '01', output_path))
+        self.client.session.post.assert_not_called()
+
     def test_item_ids_sort_by_release_year_newest_first(self):
         self.client._make_api_request = Mock(return_value={
             'Items': [
