@@ -320,8 +320,11 @@ class EmbyClient(MediaServerClient):
             if not isinstance(payload, dict) or payload.get('Type') != 'BoxSet' or payload.get('Path'):
                 logger.warning("Refusing to update Sort Name for non-BoxSet item %s", collection_id)
                 return False
-            if collection_name:
-                payload['Name'] = collection_name
+            desired_name = collection_name or payload.get('Name')
+            if payload.get('SortName') == sort_name and payload.get('Name') == desired_name:
+                return True
+            if desired_name:
+                payload['Name'] = desired_name
             payload['SortName'] = sort_name
             response = self.session.post(
                 f'{self.server_url}/Items/{collection_id}',
@@ -1312,11 +1315,35 @@ class EmbyClient(MediaServerClient):
             List of collection dicts with Id, Name, etc.
         """
         try:
-            endpoint = f"/Users/{self.user_id}/Items?api_key={self.api_key}&IncludeItemTypes=BoxSet&Recursive=true"
-            data = self._make_api_request('GET', endpoint)
-            if data and 'Items' in data:
-                return data['Items']
-            return []
+            endpoint = f"/Users/{self.user_id}/Items"
+            collections = []
+            start_index = 0
+            limit = 100
+            while True:
+                data = self._make_api_request(
+                    'GET',
+                    endpoint,
+                    params={
+                        'IncludeItemTypes': 'BoxSet',
+                        'Recursive': 'true',
+                        'Fields': 'Name,SortName',
+                        'StartIndex': start_index,
+                        'Limit': limit,
+                    },
+                )
+                if not isinstance(data, dict) or not isinstance(data.get('Items'), list):
+                    logger.error("Emby returned an unexpected collection list")
+                    return collections
+                page = data['Items']
+                collections.extend(page)
+                start_index += len(page)
+                total = data.get('TotalRecordCount')
+                if (
+                    not page
+                    or (total is not None and start_index >= total)
+                    or (total is None and len(page) < limit)
+                ):
+                    return collections
         except Exception as e:
             logger.error(f"Error getting all collections: {e}")
             return []

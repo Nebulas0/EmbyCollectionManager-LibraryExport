@@ -19,6 +19,21 @@ class EmbyLibraryApiTests(unittest.TestCase):
         self.assertEqual([item['Id'] for item in items], ['one', 'two'])
         self.assertEqual(self.client._make_api_request.call_count, 2)
 
+    def test_all_collections_are_paginated_for_sort_sweep_and_artwork(self):
+        self.client._make_api_request = Mock(side_effect=[
+            {'Items': [{'Id': 'one', 'Name': 'One'}], 'TotalRecordCount': 2},
+            {'Items': [{'Id': 'two', 'Name': 'Two'}], 'TotalRecordCount': 2},
+        ])
+
+        collections = self.client.get_all_collections()
+
+        self.assertEqual([item['Id'] for item in collections], ['one', 'two'])
+        self.assertEqual(self.client._make_api_request.call_count, 2)
+        self.assertEqual(
+            self.client._make_api_request.call_args_list[1].kwargs['params']['StartIndex'],
+            1,
+        )
+
     def test_episode_members_resolve_to_the_series_folder(self):
         series_path = '/mnt/unionfs/television/00s/The Amazing Race (2001) {tvdb-77666}'
         self.client._make_api_request = Mock(side_effect=[
