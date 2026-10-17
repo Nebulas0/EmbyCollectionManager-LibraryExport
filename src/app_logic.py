@@ -320,6 +320,7 @@ def main():
     override_mgr = RecipeOverrideManager(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     recipe_overrides = override_mgr.get_all_overrides()
     recipe_duplicates = override_mgr.get_duplicates()
+    seasonal_collection_sort_names = {}
     
     # Build the effective recipe list: original recipes + duplicates
     effective_recipes = list(RECIPES)
@@ -387,6 +388,8 @@ def main():
                 if seasonal_rule['enabled']
                 else collection_name
             )
+            if seasonal_rule['enabled']:
+                seasonal_collection_sort_names[collection_name] = sort_name
                 
             logger.info(f"Processing collection: {collection_name}")
             tmdb_ids = []
@@ -660,6 +663,9 @@ def main():
             except Exception as e:
                 logger.exception("Most Watched export failed: %s", e)
 
+    if emby:
+        _apply_collection_sorting(emby, seasonal_collection_sort_names)
+
 
 def get_random_movie_artwork(tmdb_client, tmdb_ids, collection_name):
     """
@@ -780,6 +786,30 @@ def _expire_seasonal_collection(emby, collection_name, config):
 
     _sync_library_export(emby, None, collection_name, config, False)
     return True
+
+
+def _apply_collection_sorting(emby, seasonal_sort_names):
+    try:
+        collections = emby.get_all_collections()
+    except Exception as exc:
+        logger.warning("Could not enumerate Emby collections for sort preferences: %s", exc)
+        return
+    if not isinstance(collections, list):
+        logger.warning("Emby returned an unexpected collection list while applying sort preferences")
+        return
+
+    set_sort_name = getattr(emby, 'update_collection_sort_name', None)
+    set_item_sort = getattr(emby, 'update_collection_item_sort', None)
+    for collection in collections:
+        collection_id = collection.get('Id')
+        collection_name = collection.get('Name')
+        if not collection_id or not collection_name:
+            continue
+        sort_name = seasonal_sort_names.get(collection_name, collection_name)
+        if callable(set_sort_name):
+            set_sort_name(collection_id, sort_name, collection_name)
+        if callable(set_item_sort):
+            set_item_sort(collection_id)
 
 
 def _sync_library_export(emby, collection_id, collection_name, config, enabled):

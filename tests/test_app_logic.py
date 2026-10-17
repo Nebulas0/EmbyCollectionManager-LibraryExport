@@ -1,7 +1,12 @@
 import unittest
 from unittest.mock import patch
 
-from src.app_logic import _expire_seasonal_collection, _sync_collection, _sync_library_export
+from src.app_logic import (
+    _apply_collection_sorting,
+    _expire_seasonal_collection,
+    _sync_collection,
+    _sync_library_export,
+)
 
 
 class EmptyCollectionClient:
@@ -97,6 +102,36 @@ class SyncCollectionTests(unittest.TestCase):
 
         self.assertEqual(emby.deleted, 'box-id')
         sync_export.assert_called_once_with(emby, None, 'Halloween', {}, False)
+
+    def test_all_emby_collections_get_outer_and_inner_sort_preferences(self):
+        class CollectionListEmby:
+            def __init__(self):
+                self.sort_names = []
+                self.item_sorts = []
+
+            def get_all_collections(self):
+                return [
+                    {'Id': 'regular-id', 'Name': 'A Regular Collection'},
+                    {'Id': 'seasonal-id', 'Name': 'Halloween'},
+                ]
+
+            def update_collection_sort_name(self, collection_id, sort_name, name):
+                self.sort_names.append((collection_id, sort_name, name))
+
+            def update_collection_item_sort(self, collection_id):
+                self.item_sorts.append(collection_id)
+
+        emby = CollectionListEmby()
+        _apply_collection_sorting(
+            emby,
+            {'Halloween': '0000000001 Halloween'},
+        )
+
+        self.assertEqual(emby.sort_names, [
+            ('regular-id', 'A Regular Collection', 'A Regular Collection'),
+            ('seasonal-id', '0000000001 Halloween', 'Halloween'),
+        ])
+        self.assertEqual(emby.item_sorts, ['regular-id', 'seasonal-id'])
 
 
 if __name__ == '__main__':
