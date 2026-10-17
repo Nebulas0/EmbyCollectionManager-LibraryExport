@@ -313,9 +313,16 @@ class EmbyClient(MediaServerClient):
         if hasattr(self, '_temp_collections') and collection_id in self._temp_collections:
             return True
         try:
-            payload = {'Id': str(collection_id), 'SortName': sort_name}
+            payload = self._make_api_request(
+                'GET',
+                f'/Users/{self.user_id}/Items/{collection_id}',
+            )
+            if not isinstance(payload, dict) or payload.get('Type') != 'BoxSet' or payload.get('Path'):
+                logger.warning("Refusing to update Sort Name for non-BoxSet item %s", collection_id)
+                return False
             if collection_name:
                 payload['Name'] = collection_name
+            payload['SortName'] = sort_name
             response = self.session.post(
                 f'{self.server_url}/Items/{collection_id}',
                 json=payload,

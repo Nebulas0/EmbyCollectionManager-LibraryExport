@@ -85,6 +85,14 @@ class EmbyLibraryApiTests(unittest.TestCase):
         )
 
     def test_collection_sort_name_updates_only_the_sort_field(self):
+        self.client._make_api_request = Mock(return_value={
+            'Id': 'box-id',
+            'Type': 'BoxSet',
+            'Path': None,
+            'Name': 'Christmas',
+            'SortName': 'Christmas',
+            'CustomPrefs': {'view': 'poster'},
+        })
         self.client.session.post = Mock(return_value=Mock(status_code=204))
 
         self.assertTrue(
@@ -94,15 +102,16 @@ class EmbyLibraryApiTests(unittest.TestCase):
                 'Christmas',
             )
         )
-        self.client.session.post.assert_called_once_with(
+        payload = self.client.session.post.call_args.kwargs['json']
+        self.assertEqual(payload['Name'], 'Christmas')
+        self.assertEqual(payload['SortName'], '0000000001 Christmas')
+        self.assertEqual(payload['CustomPrefs'], {'view': 'poster'})
+        self.client.session.post.assert_called_once()
+        self.assertEqual(
+            self.client.session.post.call_args.args[0],
             'http://emby.invalid/Items/box-id',
-            json={
-                'Id': 'box-id',
-                'Name': 'Christmas',
-                'SortName': '0000000001 Christmas',
-            },
-            timeout=20,
         )
+        self.assertEqual(self.client.session.post.call_args.kwargs['timeout'], 20)
 
     def test_collection_item_sort_is_saved_per_user_client_and_preserves_custom_prefs(self):
         self.client.session.get = Mock(side_effect=[
