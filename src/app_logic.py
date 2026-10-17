@@ -12,6 +12,7 @@ from src.emby_client import EmbyClient
 from src.library_export import CollectionLibraryExporter
 from src.collection_recipes import RECIPES  # Assumes recipes are defined here
 from src.seasonal import is_in_season, normalize_seasonal_rule, seasonal_sort_name
+from src.list_metadata import parse_optional_bool
 import yaml
 import os
 from typing import List, Dict, Any, Optional
@@ -136,6 +137,7 @@ def main():
                     collection_name = collection_info['name']
                     tmdb_ids = collection_info['tmdb_ids']
                     create_library = bool(collection_info.get('create_library', False))
+                    auto_create_override = parse_optional_bool(collection_info.get('auto_create_emby_library'))
                     seasonal_rule = normalize_seasonal_rule(
                         collection_name,
                         collection_info.get('seasonal'),
@@ -164,7 +166,10 @@ def main():
                                     lookup_failed = True
                             if collection_id:
                                 emby.update_collection_items(collection_id, [])
-                                _sync_library_export(emby, collection_id, collection_name, config, True)
+                                _sync_library_export(
+                                    emby, collection_id, collection_name, config, True,
+                                    auto_create_emby_library=auto_create_override,
+                                )
                             elif not lookup_failed:
                                 _sync_library_export(emby, None, collection_name, config, False)
                         continue
@@ -184,7 +189,10 @@ def main():
                         )
                         
                         if collection_id:
-                            _sync_library_export(emby, collection_id, collection_name, config, create_library)
+                            _sync_library_export(
+                                emby, collection_id, collection_name, config, create_library,
+                                auto_create_emby_library=auto_create_override,
+                            )
                             # Use custom poster generation for Trakt collections
                             category_id = collection_info.get('category_id', 12)
                             backdrop_url = collection_info.get('backdrop_url')  # Custom backdrop from YAML
@@ -228,6 +236,7 @@ def main():
                     collection_name = collection_info['name']
                     tmdb_ids = collection_info['tmdb_ids']
                     create_library = bool(collection_info.get('create_library', False))
+                    auto_create_override = parse_optional_bool(collection_info.get('auto_create_emby_library'))
                     seasonal_rule = normalize_seasonal_rule(
                         collection_name,
                         collection_info.get('seasonal'),
@@ -256,7 +265,10 @@ def main():
                                     lookup_failed = True
                             if collection_id:
                                 emby.update_collection_items(collection_id, [])
-                                _sync_library_export(emby, collection_id, collection_name, config, True)
+                                _sync_library_export(
+                                    emby, collection_id, collection_name, config, True,
+                                    auto_create_emby_library=auto_create_override,
+                                )
                             elif not lookup_failed:
                                 _sync_library_export(emby, None, collection_name, config, False)
                         continue
@@ -276,7 +288,10 @@ def main():
                         )
                         
                         if collection_id:
-                            _sync_library_export(emby, collection_id, collection_name, config, create_library)
+                            _sync_library_export(
+                                emby, collection_id, collection_name, config, create_library,
+                                auto_create_emby_library=auto_create_override,
+                            )
                             category_id = collection_info.get('category_id', 13)
                             backdrop_url = collection_info.get('backdrop_url')
                             poster_url = collection_info.get('poster_url')
@@ -475,6 +490,10 @@ def main():
             extra_trakt_urls = override.get('extra_trakt_urls', dup_config.get('extra_trakt_urls', []))
             extra_tmdb_ids = override.get('extra_tmdb_ids', dup_config.get('extra_tmdb_ids', []))
             create_library = bool(recipe_override_cfg.get('create_library', dup_config.get('create_library', False)))
+            if 'auto_create_emby_library' in recipe_override_cfg:
+                auto_create_override = parse_optional_bool(recipe_override_cfg.get('auto_create_emby_library'))
+            else:
+                auto_create_override = parse_optional_bool(dup_config.get('auto_create_emby_library'))
             
             # Process extra MDBList URLs
             if extra_mdblist_urls and mdblist:
@@ -529,7 +548,10 @@ def main():
                 )
 
                 if collection_id: # Proceed only if collection sync was successful
-                    _sync_library_export(emby, collection_id, collection_name, config, create_library)
+                    _sync_library_export(
+                        emby, collection_id, collection_name, config, create_library,
+                        auto_create_emby_library=auto_create_override,
+                    )
                     # --- BEGIN IMPROVED ARTWORK FETCHING LOGIC ---
                     # Determine if this is a TMDB collection or discover-based collection
                     if source_type == 'tmdb_series_collection' and 'tmdb_collection_id' in recipe:
@@ -804,7 +826,14 @@ def _apply_collection_sorting(emby, seasonal_sort_names):
             set_item_sort(collection_id)
 
 
-def _sync_library_export(emby, collection_id, collection_name, config, enabled):
+def _sync_library_export(
+    emby,
+    collection_id,
+    collection_name,
+    config,
+    enabled,
+    auto_create_emby_library=None,
+):
     try:
         settings = config.get('library_exports') or {}
         exporter = CollectionLibraryExporter(
@@ -813,10 +842,15 @@ def _sync_library_export(emby, collection_id, collection_name, config, enabled):
             output_root=settings.get('output_root'),
         )
         if enabled and collection_id and collection_id not in getattr(emby, '_temp_collections', {}):
+            global_default = parse_optional_bool(settings.get('auto_create_emby_library'))
+            if global_default is None:
+                global_default = True
+            override = parse_optional_bool(auto_create_emby_library)
+            create_emby_library = global_default if override is None else override
             return exporter.export_collection(
                 collection_id,
                 collection_name,
-                create_emby_library=settings.get('auto_create_emby_library', True),
+                create_emby_library=create_emby_library,
             )
         return exporter.remove_collection_export(collection_name)
     except Exception as e:

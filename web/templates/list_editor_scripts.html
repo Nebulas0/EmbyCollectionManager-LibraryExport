@@ -54,6 +54,7 @@ function resetListEditorSettings() {
     document.getElementById('list-collection-name').value = '';
     document.getElementById('list-item-limit').value = '';
     document.getElementById('create-library').checked = false;
+    document.getElementById('list-auto-create-library').value = '';
     document.getElementById('list-poster-url').value = '';
     document.getElementById('list-backdrop-url').value = '';
     document.getElementById('list-seasonal-enabled').checked = false;
@@ -97,6 +98,8 @@ async function editFile(filename) {
         document.getElementById('list-collection-name').value = settings.collection_name || '';
         document.getElementById('list-item-limit').value = settings.item_limit ?? '';
         document.getElementById('create-library').checked = !!settings.create_library;
+        document.getElementById('list-auto-create-library').value =
+            settings.auto_create_emby_library == null ? '' : String(!!settings.auto_create_emby_library);
         document.getElementById('list-poster-url').value = settings.poster_url || '';
         document.getElementById('list-backdrop-url').value = settings.backdrop_url || '';
         document.getElementById('list-seasonal-enabled').checked = !!seasonal.enabled;
@@ -140,6 +143,8 @@ async function saveFile() {
         item_limit: itemLimitText ? Number(itemLimitText) : null,
         library_ids: checkedListEditorLibraries(),
         create_library: document.getElementById('create-library').checked,
+        auto_create_emby_library: document.getElementById('list-auto-create-library').value === ''
+            ? null : document.getElementById('list-auto-create-library').value === 'true',
         poster_url: document.getElementById('list-poster-url').value.trim() || null,
         backdrop_url: document.getElementById('list-backdrop-url').value.trim() || null,
         seasonal: {

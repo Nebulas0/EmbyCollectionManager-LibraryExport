@@ -577,6 +577,7 @@ def _list_file_settings(filename, content):
         'backdrop_url',
         'category_id',
         'create_library',
+        'auto_create_emby_library',
         'seasonal',
     }
     return {key: parsed[key] for key in supported if key in parsed}
@@ -789,6 +790,13 @@ def save_recipe_override():
         return jsonify({'error': 'No recipe_name'}), 400
     if not isinstance(override, dict):
         return jsonify({'error': 'Override must be an object'}), 400
+    if 'auto_create_emby_library' in override:
+        from src.list_metadata import parse_optional_bool
+        raw_value = override.get('auto_create_emby_library')
+        parsed_value = parse_optional_bool(raw_value)
+        if raw_value is not None and parsed_value is None:
+            return jsonify({'error': 'Automatic library creation must be true, false, or inherited'}), 400
+        override['auto_create_emby_library'] = parsed_value
     from src.seasonal import normalize_seasonal_rule
     try:
         override['seasonal'] = normalize_seasonal_rule(
@@ -825,6 +833,11 @@ def duplicate_recipe():
     if not original_name or not new_name:
         return jsonify({'error': 'Missing original_name or new_name'}), 400
     from src.recipe_override import RecipeOverrideManager
+    from src.list_metadata import parse_optional_bool
+    raw_auto_create = data.get('auto_create_emby_library')
+    auto_create = parse_optional_bool(raw_auto_create)
+    if raw_auto_create is not None and auto_create is None:
+        return jsonify({'error': 'Automatic library creation must be true, false, or inherited'}), 400
     mgr = RecipeOverrideManager(BASE_DIR)
     duplicate = {
         'original_name': original_name,
@@ -836,6 +849,7 @@ def duplicate_recipe():
         'custom_poster_url': data.get('custom_poster_url'),
         'custom_backdrop_url': data.get('custom_backdrop_url'),
         'create_library': bool(data.get('create_library', False)),
+        'auto_create_emby_library': auto_create,
     }
     idx = mgr.add_duplicate(duplicate)
     return jsonify({'success': True, 'index': idx})
@@ -1048,6 +1062,13 @@ def list_config():
             return jsonify({'error': 'Missing type or filename'}), 400
         if not isinstance(config, dict):
             return jsonify({'error': 'List config must be an object'}), 400
+        if 'auto_create_emby_library' in config:
+            from src.list_metadata import parse_optional_bool
+            raw_value = config.get('auto_create_emby_library')
+            parsed_value = parse_optional_bool(raw_value)
+            if raw_value is not None and parsed_value is None:
+                return jsonify({'error': 'Automatic library creation must be true, false, or inherited'}), 400
+            config['auto_create_emby_library'] = parsed_value
         if config.get('item_limit') is not None:
             try:
                 item_limit = int(config['item_limit'])

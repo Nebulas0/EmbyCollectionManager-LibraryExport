@@ -11,6 +11,22 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 
+def parse_optional_bool(value: Any) -> Optional[bool]:
+    """Return True/False for recognized values, or None to inherit the global setting."""
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {'1', 'true', 'yes', 'on'}:
+            return True
+        if normalized in {'0', 'false', 'no', 'off', ''}:
+            return False
+        return None
+    return bool(value)
+
+
 class ListMetadataManager:
     """Manages per-collection metadata (library IDs, custom names, etc)."""
 
@@ -49,6 +65,7 @@ class ListMetadataManager:
             Dict with optional keys:
                 - collection_name: Custom collection name (overrides filename)
                 - library_ids: List of Emby library IDs to scan
+                - auto_create_emby_library: True/False override, or None to inherit global setting
                 - poster_url: Custom poster URL
                 - backdrop_url: Custom backdrop URL
                 - category_id: Custom category ID for poster template

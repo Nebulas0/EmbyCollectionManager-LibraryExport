@@ -65,6 +65,26 @@ class LibraryExportSettingsTests(unittest.TestCase):
         saved = yaml.safe_load(Path(web_app.CONFIG_PATH).read_text(encoding='utf-8'))
         self.assertTrue(saved['library_exports']['auto_create_emby_library'])
 
+    def test_collection_recipe_auto_library_override_is_saved(self):
+        response = self.client.post('/api/recipe_override', json={
+            'recipe_name': 'Horror Movies',
+            'override': {
+                'create_library': True,
+                'auto_create_emby_library': False,
+            },
+        })
+
+        self.assertEqual(response.status_code, 200)
+        saved = json.loads((Path(self.temp_dir.name) / 'config' / 'recipe_overrides.json').read_text())
+        self.assertFalse(saved['overrides']['Horror Movies']['auto_create_emby_library'])
+
+    def test_collections_editor_exposes_per_recipe_auto_library_selector(self):
+        response = self.client.get('/collections')
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b'id="detail-auto-create-library"', response.data)
+        self.assertIn(b'id="dup-auto-create-library"', response.data)
+
     def test_most_watched_tab_saves_independent_movie_and_tv_ranges(self):
         libraries = [
             {'Id': 'movie-lib', 'Name': 'Movies', 'CollectionType': 'movies', 'Locations': ['/media/movies']},

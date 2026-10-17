@@ -11,7 +11,7 @@ import logging
 import yaml
 from typing import List, Dict, Any, Set, Optional
 from pathlib import Path
-from src.list_metadata import ListMetadataManager
+from src.list_metadata import ListMetadataManager, parse_optional_bool
 
 logger = logging.getLogger(__name__)
 
@@ -100,6 +100,7 @@ class MDBListProcessor:
         YAML format supports:
           - collection_name: "Custom Name"  # overrides filename
           - library_ids: ["lib1", "lib2"]   # per-collection library selection
+          - auto_create_emby_library: false # override global library registration setting
           - category_id: 13                  # custom category for poster template
           - poster_url: "https://..."        # custom poster URL
           - backdrop_url: "https://..."      # custom backdrop URL
@@ -123,6 +124,7 @@ class MDBListProcessor:
         backdrop_url = None
         item_limit = None
         create_library = False
+        auto_create_emby_library = None
         seasonal = None
         
         is_yaml = file_path.suffix in ('.yaml', '.yml')
@@ -149,6 +151,7 @@ class MDBListProcessor:
                     backdrop_url = yaml_data.get('backdrop_url')
                     item_limit = yaml_data.get('item_limit')
                     create_library = bool(yaml_data.get('create_library', False))
+                    auto_create_emby_library = parse_optional_bool(yaml_data.get('auto_create_emby_library'))
                     seasonal = yaml_data.get('seasonal')
                     items = yaml_data.get('items', [])
                     # Convert items to text format for processing
@@ -174,6 +177,7 @@ class MDBListProcessor:
                         backdrop_url = yaml_data.get('backdrop_url')
                         item_limit = yaml_data.get('item_limit')
                         create_library = bool(yaml_data.get('create_library', False))
+                        auto_create_emby_library = parse_optional_bool(yaml_data.get('auto_create_emby_library'))
                         seasonal = yaml_data.get('seasonal')
             except yaml.YAMLError:
                 pass
@@ -199,6 +203,8 @@ class MDBListProcessor:
             item_limit = metadata.get('item_limit')
         if 'create_library' in metadata:
             create_library = bool(metadata['create_library'])
+        if 'auto_create_emby_library' in metadata:
+            auto_create_emby_library = parse_optional_bool(metadata.get('auto_create_emby_library'))
         if 'seasonal' in metadata:
             seasonal = metadata['seasonal']
         
@@ -234,6 +240,7 @@ class MDBListProcessor:
             'backdrop_url': backdrop_url,
             'item_limit': effective_limit,
             'create_library': create_library,
+            'auto_create_emby_library': auto_create_emby_library,
             'seasonal': seasonal,
         }
     

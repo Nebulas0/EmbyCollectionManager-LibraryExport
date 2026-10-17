@@ -72,8 +72,17 @@
                 <div id="detail-libraries" style="max-height:200px;overflow-y:auto;border:1px solid var(--border);border-radius:4px;padding:10px"></div>
             </div>
             <div class="form-group">
-                <label><input type="checkbox" id="detail-create-library"> Export this collection as a symlink library</label>
-                <small style="color:var(--text-dim)">Updated after the collection sync. Automatic Emby library creation is controlled in Settings.</small>
+                <label><input type="checkbox" id="detail-create-library"> Maintain a symlink export folder for this collection</label>
+                <small style="color:var(--text-dim)">The folder updates after sync. Emby library registration is controlled separately below.</small>
+            </div>
+            <div class="form-group">
+                <label for="detail-auto-create-library">Automatically create its Emby library</label>
+                <select id="detail-auto-create-library">
+                    <option value="">Use the global Settings default</option>
+                    <option value="true">Yes — create or refresh the Emby library</option>
+                    <option value="false">No — keep the export folder for manual setup</option>
+                </select>
+                <small style="color:var(--text-dim)">Applies only when symlink export above is enabled. This recipe choice overrides the global default.</small>
             </div>
             <div class="form-group" style="border-top:1px solid var(--border);padding-top:12px">
                 <label><input type="checkbox" id="detail-seasonal-enabled" onchange="toggleSeasonalFields()"> Seasonal collection (annual schedule)</label>
@@ -132,7 +141,16 @@
         <div class="form-group"><label>Original Recipe</label><input type="text" id="dup-original" readonly></div>
         <div class="form-group"><label>New Collection Name</label><input type="text" id="dup-new-name" placeholder="Popular Movies on TMDb - 4K"></div>
         <div class="form-group"><label>Target Libraries (empty = global)</label><div id="dup-libraries" style="max-height:200px;overflow-y:auto;border:1px solid var(--border);border-radius:4px;padding:10px"></div></div>
-        <div class="form-group"><label><input type="checkbox" id="dup-create-library"> Export as a symlink library</label></div>
+        <div class="form-group"><label><input type="checkbox" id="dup-create-library"> Maintain a symlink export folder</label></div>
+        <div class="form-group">
+            <label for="dup-auto-create-library">Automatically create its Emby library</label>
+            <select id="dup-auto-create-library">
+                <option value="">Use the global Settings default</option>
+                <option value="true">Yes — create or refresh the Emby library</option>
+                <option value="false">No — keep the export folder for manual setup</option>
+            </select>
+            <small style="color:var(--text-dim)">Applies only when symlink export is enabled.</small>
+        </div>
         <div class="form-group"><label>Extra MDBList URLs (one per line)</label><textarea id="dup-mdblist-urls" rows="3" style="font-family:monospace;font-size:0.85rem" placeholder="https://mdblist.com/lists/user/list-name"></textarea></div>
         <div class="form-group"><label>Extra TMDb IDs (comma-separated)</label><input type="text" id="dup-tmdb-ids" placeholder="12345, 67890"></div>
         <div style="display:flex;gap:10px;margin-top:10px">
@@ -234,6 +252,8 @@ async function showDetail(name) {
         document.getElementById('detail-edit').style.display = 'block';
         libCheckboxes('detail-libraries', ov.library_ids || []);
         document.getElementById('detail-create-library').checked = !!ov.create_library;
+        document.getElementById('detail-auto-create-library').value =
+            ov.auto_create_emby_library == null ? '' : String(!!ov.auto_create_emby_library);
         document.getElementById('detail-seasonal-enabled').checked = !!seasonal.enabled;
         document.getElementById('detail-season-start').value = seasonal.start || seasonalDefaults.start || '';
         document.getElementById('detail-season-end').value = seasonal.end || seasonalDefaults.end || '';
@@ -262,6 +282,8 @@ async function saveOverride() {
         custom_poster_url: document.getElementById('detail-poster-url').value.trim() || null,
         custom_backdrop_url: document.getElementById('detail-backdrop-url').value.trim() || null,
         create_library: document.getElementById('detail-create-library').checked,
+        auto_create_emby_library: document.getElementById('detail-auto-create-library').value === ''
+            ? null : document.getElementById('detail-auto-create-library').value === 'true',
         seasonal: {
             enabled: document.getElementById('detail-seasonal-enabled').checked,
             start: document.getElementById('detail-season-start').value.trim(),
@@ -290,6 +312,7 @@ function showDuplicate(name) {
     document.getElementById('dup-mdblist-urls').value = '';
     document.getElementById('dup-tmdb-ids').value = '';
     document.getElementById('dup-create-library').checked = false;
+    document.getElementById('dup-auto-create-library').value = '';
     libCheckboxes('dup-libraries', []);
     document.getElementById('dup-modal').classList.add('active');
 }
@@ -305,6 +328,8 @@ async function createDuplicate() {
         extra_mdblist_urls: document.getElementById('dup-mdblist-urls').value.split('\n').map(s=>s.trim()).filter(s=>s),
         extra_tmdb_ids: document.getElementById('dup-tmdb-ids').value.split(',').map(s=>parseInt(s.trim())).filter(n=>!isNaN(n)),
         create_library: document.getElementById('dup-create-library').checked,
+        auto_create_emby_library: document.getElementById('dup-auto-create-library').value === ''
+            ? null : document.getElementById('dup-auto-create-library').value === 'true',
     };
     try {
         const res = await fetch('/api/recipe_duplicate', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(dup)});

@@ -55,6 +55,7 @@ class ListEditorTests(unittest.TestCase):
             'item_limit': 5,
             'library_ids': ['movie-saved'],
             'create_library': True,
+            'auto_create_emby_library': False,
             'poster_url': 'https://example.test/saved.jpg',
         })
 
@@ -66,6 +67,7 @@ class ListEditorTests(unittest.TestCase):
         self.assertEqual(response.json['config']['item_limit'], 5)
         self.assertEqual(response.json['config']['library_ids'], ['movie-saved'])
         self.assertTrue(response.json['config']['create_library'])
+        self.assertFalse(response.json['config']['auto_create_emby_library'])
         self.assertEqual(response.json['config']['poster_url'], 'https://example.test/saved.jpg')
         self.assertEqual(response.json['config']['seasonal']['start'], '10-01')
 
@@ -77,6 +79,7 @@ class ListEditorTests(unittest.TestCase):
             self.assertIn(b'id="list-libraries"', response.data)
             self.assertIn(b'id="list-poster-url"', response.data)
             self.assertIn(b'id="create-library"', response.data)
+            self.assertIn(b'id="list-auto-create-library"', response.data)
             self.assertIn(b'onclick="saveFile()"', response.data)
             self.assertIn(b'onclick="closeModal()"', response.data)
             self.assertIn(b'async function saveFile()', response.data)
@@ -97,6 +100,7 @@ class ListEditorTests(unittest.TestCase):
                     'item_limit': 2,
                     'library_ids': ['selected-library'],
                     'create_library': True,
+                    'auto_create_emby_library': list_type == 'mdblists',
                     'seasonal': {'enabled': True, 'start': '10-01', 'end': '11-01'},
                 })
                 config = {
@@ -114,6 +118,7 @@ class ListEditorTests(unittest.TestCase):
                 self.assertEqual(result['name'], 'Custom Limited')
                 self.assertEqual(result['library_ids'], ['selected-library'])
                 self.assertTrue(result['create_library'])
+                self.assertEqual(result['auto_create_emby_library'], list_type == 'mdblists')
                 self.assertEqual(result['item_limit'], 2)
                 self.assertEqual(result['seasonal'], {
                     'enabled': True, 'start': '10-01', 'end': '11-01',
@@ -147,6 +152,7 @@ class ListEditorTests(unittest.TestCase):
                 'item_limit': 12,
                 'library_ids': ['movie-library'],
                 'create_library': True,
+                'auto_create_emby_library': False,
                 'poster_url': 'https://example.test/poster.jpg',
                 'backdrop_url': 'https://example.test/backdrop.jpg',
                 'seasonal': {'enabled': False, 'start': '', 'end': ''},
@@ -157,6 +163,7 @@ class ListEditorTests(unittest.TestCase):
         self.assertEqual(saved['item_limit'], 12)
         self.assertEqual(saved['library_ids'], ['movie-library'])
         self.assertTrue(saved['create_library'])
+        self.assertFalse(saved['auto_create_emby_library'])
         self.assertEqual(saved['poster_url'], 'https://example.test/poster.jpg')
         self.assertEqual(saved['backdrop_url'], 'https://example.test/backdrop.jpg')
 

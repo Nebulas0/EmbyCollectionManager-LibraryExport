@@ -100,7 +100,7 @@ For Movies and TV Shows independently, choose either real media-file symlinks or
 
 When a title is no longer in the selected libraries' ranked results, the next sync prunes only its manifest-owned links and sidecars. Original media and Emby library entries are left untouched.
 
-The Most Watched tab has its own automatic-library checkbox. Until you save that option, it inherits the global **Automatically create the Emby library for opted-in collections** setting; after saving, it controls Most Watched independently. When off, ranked output folders are still maintained for manual setup. The manager never removes an Emby library entry automatically. These are ordinary Emby libraries; the manager does not create HomeScreenCompanion-style per-user Home Screen sections.
+The Collections editor, Trakt Lists editor, and MDBLists editor each let you choose whether that item automatically registers an Emby library, disables registration, or inherits the global Settings default. This is separate from the per-item symlink-folder export toggle: when export is enabled but registration is off, the folder is still maintained for manual library setup. Existing Emby library entries are never removed automatically. Most Watched retains its own automatic-library checkbox. These are ordinary Emby libraries; the manager does not create HomeScreenCompanion-style per-user Home Screen sections.
 
 ### STRM playback helper plugin
 

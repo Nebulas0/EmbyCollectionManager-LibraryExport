@@ -30,7 +30,10 @@ class ListConfigRouteTests(unittest.TestCase):
         second = self.client.post('/api/list_config', json={
             'type': 'traktlists',
             'filename': 'Horror.txt',
-            'config': {'create_library': True},
+            'config': {
+                'create_library': True,
+                'auto_create_emby_library': False,
+            },
         })
 
         self.assertEqual(first.status_code, 200)
@@ -40,7 +43,17 @@ class ListConfigRouteTests(unittest.TestCase):
             'library_ids': ['movies'],
             'collection_name': 'Horror Picks',
             'create_library': True,
+            'auto_create_emby_library': False,
         })
+
+    def test_auto_library_override_rejects_unrecognized_values(self):
+        response = self.client.post('/api/list_config', json={
+            'type': 'mdblists',
+            'filename': 'SciFi.txt',
+            'config': {'auto_create_emby_library': 'sometimes'},
+        })
+
+        self.assertEqual(response.status_code, 400)
 
 
 if __name__ == '__main__':

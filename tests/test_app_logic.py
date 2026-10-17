@@ -93,6 +93,36 @@ class SyncCollectionTests(unittest.TestCase):
             create_emby_library=False,
         )
 
+    def test_collection_export_can_override_global_library_creation(self):
+        for global_default, override, expected in (
+            (True, False, False),
+            (False, True, True),
+            (False, None, False),
+        ):
+            with self.subTest(global_default=global_default, override=override):
+                config = {
+                    'library_exports': {
+                        'media_root': '/media',
+                        'output_root': '/exports',
+                        'auto_create_emby_library': global_default,
+                    },
+                }
+                with patch('src.app_logic.CollectionLibraryExporter') as exporter_class:
+                    _sync_library_export(
+                        EmptyCollectionClient(),
+                        'collection-id',
+                        'Horror',
+                        config,
+                        True,
+                        auto_create_emby_library=override,
+                    )
+
+                exporter_class.return_value.export_collection.assert_called_once_with(
+                    'collection-id',
+                    'Horror',
+                    create_emby_library=expected,
+                )
+
     def test_expired_seasonal_collection_is_removed_and_managed_links_are_cleared(self):
         class SeasonalEmby:
             def get_collection_id(self, name):

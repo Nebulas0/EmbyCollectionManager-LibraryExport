@@ -87,8 +87,8 @@
         <h2>Collection Library Export</h2>
         <p style="color:var(--text-dim);margin-bottom:15px;font-size:0.9rem">Exports only collections opted into symlink library export. Source folders are linked without changing the original media.</p>
         <div class="form-group">
-            <label><input type="checkbox" name="library_export_auto_create_emby_library" {% if library_exports.get('auto_create_emby_library',True) %}checked{% endif %}> Automatically create the Emby library for opted-in collections</label>
-            <small style="color:var(--text-dim)">When off, symlink folders are still maintained for manual library setup. Existing matching libraries are refreshed when their contents change and are never deleted.</small>
+            <label><input type="checkbox" name="library_export_auto_create_emby_library" {% if library_exports.get('auto_create_emby_library',True) %}checked{% endif %}> Default: automatically create Emby libraries for opted-in collections</label>
+            <small style="color:var(--text-dim)">Individual collection recipes, Trakt lists, and MDBLists can override this default. When off, symlink folders are still maintained for manual library setup. Existing matching libraries are refreshed when their contents change and are never deleted.</small>
         </div>
         <div class="form-group">
             <label>Emby media path root</label>
