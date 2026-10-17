@@ -14,7 +14,7 @@ import logging
 import re
 from datetime import datetime
 from pathlib import Path
-from flask import Flask, render_template, request, jsonify, redirect, url_for, send_file
+from flask import Flask, Response, render_template, request, jsonify, redirect, url_for, send_file
 
 # Add parent directory to path so we can import src modules
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -775,16 +775,60 @@ def artwork():
             config=config
         )
         collections = emby.get_all_collections()
-        # Build image URLs for each collection
-        base_url = emby_cfg['server_url'].rstrip('/')
-        api_key = emby_cfg['api_key']
+        # Proxy images through this app so browsers do not need Emby's internal URL or API key.
         for col in collections:
             col_id = col.get('Id', '')
-            col['poster_url'] = f"{base_url}/Items/{col_id}/Images/Primary?api_key={api_key}"
-            col['backdrop_url'] = f"{base_url}/Items/{col_id}/Images/Backdrop?api_key={api_key}"
+            col['poster_url'] = url_for(
+                'collection_image_proxy',
+                collection_id=col_id,
+                image_type='Primary',
+            )
+            col['backdrop_url'] = url_for(
+                'collection_image_proxy',
+                collection_id=col_id,
+                image_type='Backdrop',
+            )
         return render_template('artwork.html', collections=collections, error=None)
     except Exception as e:
         return render_template('artwork.html', collections=[], error=str(e))
+
+
+@app.route('/api/collection_image/<collection_id>/<image_type>')
+def collection_image_proxy(collection_id, image_type):
+    """Serve Emby artwork through the manager so browser clients can use internal Emby URLs."""
+    if not re.fullmatch(r'[A-Za-z0-9-]{1,64}', collection_id or ''):
+        return Response(status=400)
+    if image_type not in {'Primary', 'Backdrop'}:
+        return Response(status=400)
+
+    config = load_config()
+    emby_cfg = config.get('emby', {})
+    if not emby_cfg.get('server_url') or not emby_cfg.get('api_key'):
+        return Response(status=503)
+    try:
+        from src.emby_client import EmbyClient
+        emby = EmbyClient(
+            server_url=emby_cfg['server_url'],
+            api_key=emby_cfg['api_key'],
+            user_id=emby_cfg.get('user_id', ''),
+            config=config,
+        )
+        response = emby.session.get(
+            f"{emby.server_url}/Items/{collection_id}/Images/{image_type}",
+            timeout=20,
+        )
+        if response.status_code != 200 or not response.content:
+            return Response(status=404 if response.status_code == 404 else 502)
+        content_type = response.headers.get('Content-Type', 'image/jpeg').split(';', 1)[0]
+        if not content_type.lower().startswith('image/'):
+            return Response(status=502)
+        result = Response(response.content, mimetype=content_type)
+        result.headers['Cache-Control'] = 'private, max-age=300'
+        result.headers['X-Content-Type-Options'] = 'nosniff'
+        return result
+    except Exception as exc:
+        logger.warning("Could not proxy collection artwork for %s: %s", collection_id, exc)
+        return Response(status=502)
 
 
 @app.route('/api/collection_image', methods=['POST'])
