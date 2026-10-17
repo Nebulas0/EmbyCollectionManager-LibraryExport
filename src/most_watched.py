@@ -25,10 +25,12 @@ logger = logging.getLogger(__name__)
 DEFAULT_MOST_WATCHED_SETTINGS = {
     'movies': {
         'enabled': False, 'days': 14, 'limit': 10, 'library_ids': None,
+        'target_library_id': None,
         'output_mode': 'symlink', 'image_variants': ['poster', 'thumb'], 'badge_style': 'neutral',
     },
     'tv_shows': {
         'enabled': False, 'days': 14, 'limit': 10, 'library_ids': None,
+        'target_library_id': None,
         'output_mode': 'symlink', 'image_variants': ['poster', 'thumb'], 'badge_style': 'neutral',
     },
 }
@@ -75,6 +77,8 @@ def normalize_most_watched_settings(value: Any) -> Dict[str, Dict[str, Any]]:
             library_ids = list(dict.fromkeys(str(value) for value in raw_library_ids if value))
         else:
             library_ids = []
+        raw_target_library_id = section.get('target_library_id')
+        target_library_id = str(raw_target_library_id) if raw_target_library_id else None
         output_mode = str(section.get('output_mode', defaults['output_mode'])).lower()
         if output_mode not in MOST_WATCHED_OUTPUT_MODES:
             output_mode = defaults['output_mode']
@@ -96,6 +100,7 @@ def normalize_most_watched_settings(value: Any) -> Dict[str, Dict[str, Any]]:
             'days': max(1, min(days, 3650)),
             'limit': max(1, min(limit, 100)),
             'library_ids': library_ids,
+            'target_library_id': target_library_id,
             'output_mode': output_mode,
             'image_variants': image_variants,
             'badge_style': badge_style,
@@ -574,14 +579,119 @@ class MostWatchedLibraryExporter:
                     planned_links[str(series_rel / season_dir / link_name)] = str(source)
         return planned_files, planned_links
 
-    def _library_dir(self, kind: str) -> Tuple[str, str, Path]:
+    def _library_dir(
+        self,
+        kind: str,
+        target_library_id: Optional[str] = None,
+    ) -> Tuple[str, str, Path, Optional[str]]:
         library_name, collection_type = self._library_info(kind)
+        if target_library_id:
+            libraries = self.emby.get_libraries() if hasattr(self.emby, 'get_libraries') else []
+            target = next(
+                (library for library in libraries if str(library.get('Id')) == str(target_library_id)),
+                None,
+            )
+            if target is None:
+                raise ValueError(f'Selected Most Watched target library {target_library_id} no longer exists')
+            if str(target.get('CollectionType', '')).lower() != collection_type:
+                raise ValueError(f'Selected target library "{target.get("Name")}" has the wrong media type')
+            locations = target.get('Locations') or []
+            if len(locations) != 1 or not isinstance(locations[0], str):
+                raise ValueError('The selected target library must have exactly one folder location')
+            raw_path = Path(os.path.abspath(locations[0]))
+            library_dir = raw_path.resolve()
+            output_root = self.output_root.resolve()
+            if raw_path.is_symlink() or library_dir == output_root or not _within(library_dir, output_root):
+                raise ValueError(
+                    'The selected target library folder must be a non-symlink path inside the configured export root'
+                )
+            if library_dir.exists() and not library_dir.is_dir():
+                raise ValueError('The selected target library location is not a directory')
+            return str(target.get('Name') or library_name), collection_type, library_dir, str(target_library_id)
+
         library_dir = self.output_root / library_name
         if not _within(library_dir, self.output_root):
             raise ValueError('Most Watched output path escaped the configured export directory')
         if library_dir.is_symlink():
             raise ValueError(f'Most Watched output directory is a symlink: {library_dir}')
-        return library_name, collection_type, library_dir
+        return library_name, collection_type, library_dir, None
+
+    @staticmethod
+    def _set_manifest_library(
+        library_dir: Path,
+        kind: str,
+        library_id: Optional[str],
+        active: bool,
+    ) -> None:
+        manifest_path = library_dir / MostWatchedLibraryExporter._manifest_name
+        if manifest_path.is_symlink() or not manifest_path.is_file():
+            return
+        try:
+            manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
+        except (OSError, ValueError) as exc:
+            logger.warning("Could not add target-library metadata to Most Watched manifest %s: %s", manifest_path, exc)
+            return
+        if not isinstance(manifest, dict):
+            return
+        manifest['kind'] = kind
+        manifest['library_id'] = library_id
+        manifest['active'] = active
+        with tempfile.NamedTemporaryFile(
+            mode='w',
+            encoding='utf-8',
+            dir=library_dir,
+            prefix='.mw-manifest-meta-',
+            delete=False,
+        ) as staged:
+            json.dump(manifest, staged, indent=2)
+            os.fchmod(staged.fileno(), 0o644)
+            staged_path = Path(staged.name)
+        os.replace(staged_path, manifest_path)
+
+    def _deactivate_other_manifests(self, kind: str, active_library_dir: Optional[Path]) -> None:
+        active_key = (
+            os.path.normcase(os.path.abspath(str(active_library_dir)))
+            if active_library_dir is not None else None
+        )
+        try:
+            manifests = self.output_root.rglob(self._manifest_name)
+            for manifest_path in manifests:
+                library_dir = manifest_path.parent
+                if not _within(library_dir, self.output_root) or library_dir.is_symlink():
+                    continue
+                path_key = os.path.normcase(os.path.abspath(str(library_dir)))
+                if path_key == active_key:
+                    continue
+                try:
+                    manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
+                    if not isinstance(manifest, dict):
+                        continue
+                    old_kind = manifest.get('kind')
+                    if old_kind is None:
+                        old_kind = (
+                            'movies' if library_dir.name == MOVIE_LIBRARY_NAME
+                            else 'tv_shows' if library_dir.name == TV_LIBRARY_NAME
+                            else None
+                        )
+                    if old_kind != kind or manifest.get('active') is False:
+                        continue
+                    manifest['kind'] = kind
+                    manifest['active'] = False
+                    with tempfile.NamedTemporaryFile(
+                        mode='w',
+                        encoding='utf-8',
+                        dir=library_dir,
+                        prefix='.mw-manifest-meta-',
+                        delete=False,
+                    ) as staged:
+                        json.dump(manifest, staged, indent=2)
+                        os.fchmod(staged.fileno(), 0o644)
+                        staged_path = Path(staged.name)
+                    os.replace(staged_path, manifest_path)
+                except (OSError, ValueError) as exc:
+                    logger.warning("Could not deactivate stale Most Watched manifest %s: %s", manifest_path, exc)
+        except OSError as exc:
+            logger.warning("Could not inspect old Most Watched output manifests: %s", exc)
 
     @staticmethod
     def _path_key(path: str) -> str:
@@ -707,8 +817,10 @@ class MostWatchedLibraryExporter:
         kind: str,
         planned_files: Dict[str, bytes],
         planned_links: Dict[str, str],
+        library_dir: Optional[Path] = None,
     ) -> Tuple[Path, bool, bool]:
-        _, _, library_dir = self._library_dir(kind)
+        if library_dir is None:
+            _, _, library_dir, _ = self._library_dir(kind)
         manifest_path = library_dir / self._manifest_name
         old_files, old_links = self._load_manifest(manifest_path)
         if set(planned_files).intersection(planned_links):
@@ -813,6 +925,7 @@ class MostWatchedLibraryExporter:
             delete=False,
         ) as staged_manifest:
             json.dump(manifest, staged_manifest, indent=2)
+            os.fchmod(staged_manifest.fileno(), 0o644)
             staged_manifest_path = Path(staged_manifest.name)
         os.replace(staged_manifest_path, manifest_path)
         return library_dir, changed, bool(planned_files or planned_links)
@@ -825,6 +938,8 @@ class MostWatchedLibraryExporter:
         output_mode: str = 'symlink',
         image_variants: Optional[List[str]] = None,
         badge_style: str = 'neutral',
+        target_library_id: Optional[str] = None,
+        active: bool = True,
     ) -> Dict[str, Any]:
         output_mode = str(output_mode).lower()
         if output_mode not in MOST_WATCHED_OUTPUT_MODES:
@@ -836,7 +951,10 @@ class MostWatchedLibraryExporter:
         badge_style = str(badge_style).lower()
         if badge_style not in MOST_WATCHED_BADGE_STYLES:
             badge_style = 'neutral'
-        library_name, collection_type, _ = self._library_dir(kind)
+        library_name, collection_type, library_dir, selected_library_id = self._library_dir(
+            kind,
+            target_library_id,
+        )
         if kind == 'movies':
             planned_files, planned_links = self._movie_files(
                 ranked_items, output_mode, image_variants, badge_style,
@@ -847,20 +965,30 @@ class MostWatchedLibraryExporter:
             )
         if ranked_items and not planned_files and not planned_links:
             raise RuntimeError(f'No accessible media was found for the {kind.replace("_", " ")} Top List')
-        library_dir, changed, has_files = self._reconcile_files(kind, planned_files, planned_links)
-        library_id = None
+        library_dir, changed, has_files = self._reconcile_files(
+            kind,
+            planned_files,
+            planned_links,
+            library_dir=library_dir,
+        )
+        library_id = selected_library_id
         created = False
-        if has_files and create_emby_library:
+        if selected_library_id:
+            pass
+        elif has_files and create_emby_library:
             library_info = self.emby.ensure_library(library_name, str(library_dir), collection_type)
             if not library_info:
                 raise RuntimeError(f'Could not create or verify Emby library "{library_name}"')
             library_id, created = library_info
+        else:
+            library_id = self._find_library_id(library_name, library_dir)
+        self._set_manifest_library(library_dir, kind, library_id, active)
+        self._deactivate_other_manifests(kind, library_dir if active else None)
         if changed and library_id and not created:
             self.emby.refresh_library(library_id)
         elif changed:
             self.emby.refresh_library_by_name(library_name, str(library_dir))
         if output_mode == 'strm' and ranked_items:
-            library_id = library_id or self._find_library_id(library_name, library_dir)
             if library_id:
                 self._apply_strm_sort_names(kind, library_id, library_dir, planned_files)
         return {
@@ -1056,7 +1184,13 @@ def sync_most_watched(emby_client, config: Dict[str, Any], state_dir: str) -> Di
         if section['enabled']:
             continue
         try:
-            exporter.sync(kind, [], create_emby_library=False)
+            exporter.sync(
+                kind,
+                [],
+                create_emby_library=False,
+                target_library_id=section.get('target_library_id'),
+                active=False,
+            )
             output_key = 'tv_shows' if kind == 'tv_shows' else 'movies'
             state[output_key] = []
             state['libraries'].pop(output_key, None)
@@ -1102,6 +1236,7 @@ def sync_most_watched(emby_client, config: Dict[str, Any], state_dir: str) -> Di
                 output_mode=section['output_mode'],
                 image_variants=section['image_variants'],
                 badge_style=section['badge_style'],
+                target_library_id=section.get('target_library_id'),
             )
             state[output_key] = [
                 {

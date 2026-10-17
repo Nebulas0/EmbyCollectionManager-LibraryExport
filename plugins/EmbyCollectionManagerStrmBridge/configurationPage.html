@@ -1,0 +1,87 @@
+<div id="EmbyCollectionManagerStrmBridgeConfigPage" data-role="page" class="page type-interior pluginConfigurationPage"
+     data-require="emby-input,emby-button,emby-select" data-controller="__plugin/EmbyCollectionManagerStrmBridgeJS">
+    <div data-role="content">
+        <div class="content-primary">
+            <h1>Most Watched HomeScreen</h1>
+            <p>
+                Configure a dedicated, per-user HomeScreen section for each manager-owned Most Watched library.
+                Library targets are selected on the Collection Manager's Most Watched page.
+            </p>
+            <div id="mw-config-error" class="fieldDescription" role="alert"></div>
+            <div id="mw-config-status" class="fieldDescription"></div>
+
+            <section class="verticalSection">
+                <h2>Movies</h2>
+                <label class="inputLabel inputLabelUnfocused" for="mw-movie-users">HomeScreen users</label>
+                <select id="mw-movie-users" is="emby-select" multiple size="6"></select>
+                <div class="fieldDescription">Only selected users receive the dedicated Top Played Movies section.</div>
+                <div class="selectContainer">
+                    <label class="selectLabel" for="mw-movie-image">HomeScreen image</label>
+                    <select id="mw-movie-image" is="emby-select">
+                        <option value="">Auto</option>
+                        <option value="Primary">Poster (Primary)</option>
+                        <option value="Thumb">Thumb / landscape</option>
+                    </select>
+                </div>
+                <div class="selectContainer">
+                    <label class="selectLabel" for="mw-movie-sort">Sort by</label>
+                    <select id="mw-movie-sort" is="emby-select">
+                        <option value="SortName">Name / rank (Sort Name)</option>
+                        <option value="DateCreated,SortName">Item Added</option>
+                    </select>
+                </div>
+                <div class="selectContainer">
+                    <label class="selectLabel" for="mw-movie-order">Sort order</label>
+                    <select id="mw-movie-order" is="emby-select">
+                        <option value="Ascending">Ascending</option>
+                        <option value="Descending">Descending</option>
+                    </select>
+                </div>
+            </section>
+
+            <section class="verticalSection">
+                <h2>TV Shows</h2>
+                <label class="inputLabel inputLabelUnfocused" for="mw-tv-users">HomeScreen users</label>
+                <select id="mw-tv-users" is="emby-select" multiple size="6"></select>
+                <div class="fieldDescription">Only selected users receive the dedicated Top Played TV Shows section.</div>
+                <div class="selectContainer">
+                    <label class="selectLabel" for="mw-tv-image">HomeScreen image</label>
+                    <select id="mw-tv-image" is="emby-select">
+                        <option value="">Auto</option>
+                        <option value="Primary">Poster (Primary)</option>
+                        <option value="Thumb">Thumb / landscape</option>
+                    </select>
+                </div>
+                <div class="selectContainer">
+                    <label class="selectLabel" for="mw-tv-sort">Sort by</label>
+                    <select id="mw-tv-sort" is="emby-select">
+                        <option value="SortName">Name / rank (Sort Name)</option>
+                        <option value="DateCreated,SortName">Item Added</option>
+                    </select>
+                </div>
+                <div class="selectContainer">
+                    <label class="selectLabel" for="mw-tv-order">Sort order</label>
+                    <select id="mw-tv-order" is="emby-select">
+                        <option value="Ascending">Ascending</option>
+                        <option value="Descending">Descending</option>
+                    </select>
+                </div>
+            </section>
+
+            <div class="fieldDescription">
+                Poster and Thumb/Landscape files are generated separately on the Manager's Most Watched page.
+                Enable the matching image version there as well. These settings affect only this plugin's
+                dedicated Top Played sections. The bridge excludes the selected output library from other
+                HomeScreen sections for those users, so its items appear in the ranked row; other libraries
+                and their sort settings are left unchanged.
+                STRM exports can always be isolated. Symlink items are updated only when Emby indexes them as
+                distinct items; the bridge will not change a source item if Emby resolves a symlink to that item.
+                The bridge adds its own row; if a client has a separate pinned shortcut to the library, hide
+                that shortcut manually to avoid seeing the same titles twice.
+            </div>
+            <button is="emby-button" type="button" class="raised button-submit block" id="mw-save">
+                <span>Save HomeScreen settings</span>
+            </button>
+        </div>
+    </div>
+</div>

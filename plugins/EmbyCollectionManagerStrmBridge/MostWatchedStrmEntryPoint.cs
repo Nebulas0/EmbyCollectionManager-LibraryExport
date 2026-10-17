@@ -2,6 +2,10 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Reflection;
+using System.Runtime.Serialization;
+using System.Runtime.Serialization.Json;
+using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using MediaBrowser.Controller.Entities;
@@ -15,13 +19,17 @@ using MediaBrowser.Model.Entities;
 using MediaBrowser.Model.IO;
 using MediaBrowser.Model.Logging;
 using MediaBrowser.Model.Tasks;
+using MediaBrowser.Model.Users;
 
 namespace EmbyCollectionManagerStrmBridge
 {
     public sealed class MostWatchedStrmEntryPoint : IServerEntryPoint
     {
         private const string ManifestName = ".most-watched-manifest.json";
+        private const string HomeSectionPrefix = "ECM Top Played - ";
+        private static MostWatchedStrmEntryPoint? _instance;
         private readonly ILibraryManager _libraryManager;
+        private readonly IUserManager _userManager;
         private readonly IProviderManager _providerManager;
         private readonly IItemRepository _itemRepository;
         private readonly IMediaSourceManager _mediaSourceManager;
@@ -30,9 +38,12 @@ namespace EmbyCollectionManagerStrmBridge
         private readonly object _gate = new object();
         private readonly HashSet<long> _inFlight = new HashSet<long>();
         private readonly HashSet<long> _probeQueued = new HashSet<long>();
+        private bool _homeSyncInFlight;
+        private DateTime _lastHomeSyncUtc = DateTime.MinValue;
 
         public MostWatchedStrmEntryPoint(
             ILibraryManager libraryManager,
+            IUserManager userManager,
             IProviderManager providerManager,
             IItemRepository itemRepository,
             IMediaSourceManager mediaSourceManager,
@@ -40,6 +51,7 @@ namespace EmbyCollectionManagerStrmBridge
             ILogManager logManager)
         {
             _libraryManager = libraryManager;
+            _userManager = userManager;
             _providerManager = providerManager;
             _itemRepository = itemRepository;
             _mediaSourceManager = mediaSourceManager;
@@ -49,8 +61,16 @@ namespace EmbyCollectionManagerStrmBridge
 
         public void Run()
         {
+            _instance = this;
             _libraryManager.ItemAdded += OnItemChanged;
             _libraryManager.ItemUpdated += OnItemChanged;
+            _libraryManager.ItemRemoved += OnItemRemoved;
+            QueueHomeSectionSync(true);
+        }
+
+        public static void RequestHomeSectionSync()
+        {
+            _instance?.QueueHomeSectionSync(true);
         }
 
         private void OnItemChanged(object sender, ItemChangeEventArgs args)
@@ -68,6 +88,11 @@ namespace EmbyCollectionManagerStrmBridge
             Task.Run(() => ProcessItem(item.InternalId));
         }
 
+        private void OnItemRemoved(object sender, ItemChangeEventArgs args)
+        {
+            QueueHomeSectionSync(false);
+        }
+
         private void ProcessItem(long internalId)
         {
             try
@@ -76,13 +101,20 @@ namespace EmbyCollectionManagerStrmBridge
                 if (item == null || string.IsNullOrEmpty(item.Path) || !TryFindLibraryRoot(item.Path, out var libraryRoot))
                     return;
 
-                var needsProbe = item is Movie &&
+                var isStrm = item.Path.EndsWith(".strm", StringComparison.OrdinalIgnoreCase);
+                if (!isStrm && !IsDistinctSymlinkCopy(item, libraryRoot))
+                {
+                    _logger.Warn("[Most Watched] Skipping symlink item that Emby resolves to its source: " + item.Path);
+                    return;
+                }
+
+                var needsProbe = isStrm && item is Movie &&
                                  ((item.RunTimeTicks ?? 0) <= 0 || !HasMediaStreams(item));
                 var changed = SetRankAndImages(item, libraryRoot);
                 var sourceFound = false;
-                if (item is Movie || item is Episode)
+                if (isStrm && (item is Movie || item is Episode))
                     changed |= SyncSourceVideoInfo(item, out sourceFound);
-                if (item is Episode && (!sourceFound || !HasMediaStreams(item)))
+                if (isStrm && item is Episode && (!sourceFound || !HasMediaStreams(item)))
                     needsProbe = true;
 
                 if (changed)
@@ -90,6 +122,7 @@ namespace EmbyCollectionManagerStrmBridge
 
                 if (needsProbe)
                     QueueMediaProbe(item);
+                QueueHomeSectionSync(false);
             }
             catch (Exception ex)
             {
@@ -214,8 +247,15 @@ namespace EmbyCollectionManagerStrmBridge
                 var baseName = Path.GetFileNameWithoutExtension(item.Path);
                 if (!string.IsNullOrEmpty(directory))
                 {
-                    changed |= SetLocalImage(item, ImageType.Primary, Path.Combine(directory, baseName + ".jpg"));
-                    changed |= SetLocalImage(item, ImageType.Thumb, Path.Combine(directory, baseName + "-thumb.jpg"));
+                    var isStrm = item.Path.EndsWith(".strm", StringComparison.OrdinalIgnoreCase);
+                    changed |= SetLocalImage(
+                        item,
+                        ImageType.Primary,
+                        Path.Combine(directory, isStrm ? baseName + ".jpg" : "poster.jpg"));
+                    changed |= SetLocalImage(
+                        item,
+                        ImageType.Thumb,
+                        Path.Combine(directory, isStrm ? baseName + "-thumb.jpg" : "landscape.jpg"));
                 }
             }
             else if (item is Series)
@@ -283,7 +323,7 @@ namespace EmbyCollectionManagerStrmBridge
         {
             if (item is Movie || item is Episode)
                 return !string.IsNullOrEmpty(item.Path) &&
-                       item.Path.EndsWith(".strm", StringComparison.OrdinalIgnoreCase);
+                       TryFindLibraryRoot(item.Path, out _);
             if (item is Series &&
                 !string.IsNullOrEmpty(item.Path) &&
                 TryFindLibraryRoot(item.Path, out _))
@@ -298,6 +338,44 @@ namespace EmbyCollectionManagerStrmBridge
                 }
             }
             return false;
+        }
+
+        private bool IsDistinctSymlinkCopy(BaseItem item, string libraryRoot)
+        {
+            if (item is Series)
+                return true;
+
+            var targetPath = ReadManagedLinkTarget(item.Path, libraryRoot);
+            if (string.IsNullOrEmpty(targetPath))
+                return false;
+
+            var source = _libraryManager.FindByPath(targetPath, false);
+            return source == null || source.InternalId != item.InternalId;
+        }
+
+        private static string ReadManagedLinkTarget(string itemPath, string libraryRoot)
+        {
+            try
+            {
+                var root = Path.GetFullPath(libraryRoot).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
+                var fullPath = Path.GetFullPath(itemPath);
+                if (!fullPath.StartsWith(root, StringComparison.OrdinalIgnoreCase))
+                    return string.Empty;
+                var relative = fullPath.Substring(root.Length).Replace('\\', '/');
+                var manifestPath = Path.Combine(libraryRoot, ManifestName);
+                using (var stream = File.OpenRead(manifestPath))
+                {
+                    var serializer = new DataContractJsonSerializer(typeof(ManagedManifest));
+                    var manifest = serializer.ReadObject(stream) as ManagedManifest;
+                    if (manifest != null && manifest.Links != null &&
+                        manifest.Links.TryGetValue(relative, out var target))
+                        return target;
+                }
+            }
+            catch
+            {
+            }
+            return string.Empty;
         }
 
         private static bool IsManagerStrmCopy(BaseItem item)
@@ -318,7 +396,8 @@ namespace EmbyCollectionManagerStrmBridge
                 : new DirectoryInfo(Path.GetDirectoryName(itemPath) ?? string.Empty);
             while (directory != null)
             {
-                if (File.Exists(Path.Combine(directory.FullName, ManifestName)))
+                var manifestPath = Path.Combine(directory.FullName, ManifestName);
+                if (File.Exists(manifestPath) && ReadManagedManifest(manifestPath)?.Active != false)
                 {
                     libraryRoot = directory.FullName;
                     return true;
@@ -328,16 +407,555 @@ namespace EmbyCollectionManagerStrmBridge
             return false;
         }
 
+        [DataContract]
+        private sealed class ManagedManifest
+        {
+            [DataMember(Name = "kind")]
+            public string? Kind { get; set; }
+
+            [DataMember(Name = "library_id")]
+            public string? LibraryId { get; set; }
+
+            [DataMember(Name = "active")]
+            public bool? Active { get; set; }
+
+            [DataMember(Name = "links")]
+            public Dictionary<string, string>? Links { get; set; }
+        }
+
         private static string StreamSignature(List<MediaStream> streams)
         {
             return string.Join("|", streams.OrderBy(stream => stream.Index).Select(stream =>
                 $"{stream.Index}:{stream.Type}:{stream.Codec}:{stream.Language}:{stream.Width}x{stream.Height}:{stream.Channels}:{stream.IsExternal}:{stream.Path}"));
         }
 
+        private void QueueHomeSectionSync(bool force)
+        {
+            lock (_gate)
+            {
+                if (_homeSyncInFlight)
+                    return;
+                if (!force && DateTime.UtcNow - _lastHomeSyncUtc < TimeSpan.FromSeconds(20))
+                    return;
+                _homeSyncInFlight = true;
+            }
+
+            Task.Run(async () =>
+            {
+                try
+                {
+                    await Task.Delay(1500).ConfigureAwait(false);
+                    SyncHomeSections();
+                    _lastHomeSyncUtc = DateTime.UtcNow;
+                }
+                catch (Exception ex)
+                {
+                    _logger.Warn("[Most Watched] Could not synchronize HomeScreen sections: " + ex.Message);
+                }
+                finally
+                {
+                    lock (_gate)
+                        _homeSyncInFlight = false;
+                }
+            });
+        }
+
+        private void SyncHomeSections()
+        {
+            var plugin = Plugin.Instance;
+            var config = plugin?.Configuration;
+            if (config == null)
+                return;
+
+            config.ManagedHomeSections = config.ManagedHomeSections ?? new List<HomeSectionTracking>();
+            var managedLibraries = GetManagedLibraries();
+            var desired = new List<DesiredHomeSection>();
+            foreach (var library in managedLibraries)
+            {
+                var users = library.Kind == "movies"
+                    ? config.MovieHomeSectionUserIds
+                    : config.TvHomeSectionUserIds;
+                foreach (var userId in users ?? new List<string>())
+                {
+                    if (string.IsNullOrWhiteSpace(userId))
+                        continue;
+                    desired.Add(new DesiredHomeSection
+                    {
+                        UserId = userId,
+                        LibraryId = library.Id,
+                        Kind = library.Kind,
+                        LibraryName = library.Name
+                    });
+                }
+            }
+
+            var desiredKeys = new HashSet<string>(desired.Select(section => TrackingKey(
+                section.UserId,
+                section.Kind,
+                section.LibraryId)), StringComparer.OrdinalIgnoreCase);
+
+            foreach (var stale in config.ManagedHomeSections.ToList())
+            {
+                if (desiredKeys.Contains(TrackingKey(stale.UserId, stale.Kind, stale.LibraryId)))
+                    continue;
+                try
+                {
+                    var internalUserId = _userManager.GetInternalId(stale.UserId);
+                    if (!string.IsNullOrEmpty(stale.SectionId))
+                        _userManager.DeleteHomeSections(internalUserId, new[] { stale.SectionId }, CancellationToken.None);
+                }
+                catch (Exception ex)
+                {
+                    _logger.Warn("[Most Watched] Could not remove an obsolete HomeScreen section: " + ex.Message);
+                }
+                config.ManagedHomeSections.Remove(stale);
+            }
+
+            foreach (var wanted in desired)
+            {
+                try
+                {
+                    SyncHomeSection(config, wanted);
+                }
+                catch (Exception ex)
+                {
+                    _logger.Warn("[Most Watched] HomeScreen section for " + wanted.LibraryName + " failed: " + ex.Message);
+                }
+            }
+
+            SyncHomeSectionExclusions(config, desired);
+            plugin?.SaveConfiguration();
+        }
+
+        private void SyncHomeSection(PluginConfiguration config, DesiredHomeSection wanted)
+        {
+            var internalUserId = _userManager.GetInternalId(wanted.UserId);
+            var currentSections = _userManager.GetHomeSections(internalUserId, CancellationToken.None)?.Sections
+                                  ?? Array.Empty<ContentSection>();
+            var tracked = config.ManagedHomeSections.FirstOrDefault(entry =>
+                string.Equals(entry.UserId, wanted.UserId, StringComparison.OrdinalIgnoreCase) &&
+                string.Equals(entry.Kind, wanted.Kind, StringComparison.OrdinalIgnoreCase));
+            var displayName = wanted.Kind == "movies"
+                ? HomeSectionPrefix + "Movies"
+                : HomeSectionPrefix + "TV Shows";
+            var existing = tracked == null
+                ? null
+                : currentSections.FirstOrDefault(section => GetStringProperty(section, "Id") == tracked.SectionId);
+            existing = existing ?? currentSections.FirstOrDefault(section =>
+                string.Equals(GetStringProperty(section, "CustomName"), displayName, StringComparison.OrdinalIgnoreCase));
+
+            var updated = BuildHomeSection(config, wanted, displayName, existing);
+            if (existing != null)
+            {
+                var existingId = GetProperty(existing, "Id");
+                if (existingId != null)
+                    SetProperty(updated, "Id", existingId);
+                _userManager.UpdateHomeSection(internalUserId, updated, CancellationToken.None);
+                if (tracked == null)
+                {
+                    tracked = new HomeSectionTracking
+                    {
+                        UserId = wanted.UserId,
+                        Kind = wanted.Kind
+                    };
+                    config.ManagedHomeSections.Add(tracked);
+                }
+                tracked.SectionId = GetStringProperty(existing, "Id") ?? string.Empty;
+                tracked.LibraryId = wanted.LibraryId;
+                return;
+            }
+
+            var oldIds = new HashSet<string>(
+                currentSections.Select(section => GetStringProperty(section, "Id"))
+                    .Where(id => !string.IsNullOrEmpty(id))
+                    .Select(id => id!),
+                StringComparer.OrdinalIgnoreCase);
+            _userManager.AddHomeSection(internalUserId, updated, CancellationToken.None);
+            var after = _userManager.GetHomeSections(internalUserId, CancellationToken.None)?.Sections
+                        ?? Array.Empty<ContentSection>();
+            var created = after.FirstOrDefault(section =>
+            {
+                var sectionId = GetStringProperty(section, "Id");
+                return !string.IsNullOrEmpty(sectionId) && !oldIds.Contains(sectionId!);
+            });
+            if (created == null)
+                created = after.FirstOrDefault(section =>
+                    string.Equals(GetStringProperty(section, "CustomName"), displayName, StringComparison.OrdinalIgnoreCase));
+
+            if (tracked == null)
+            {
+                tracked = new HomeSectionTracking
+                {
+                    UserId = wanted.UserId,
+                    Kind = wanted.Kind
+                };
+                config.ManagedHomeSections.Add(tracked);
+            }
+            tracked.SectionId = GetStringProperty(created, "Id") ?? string.Empty;
+            tracked.LibraryId = wanted.LibraryId;
+        }
+
+        private void SyncHomeSectionExclusions(PluginConfiguration config, List<DesiredHomeSection> desired)
+        {
+            config.ManagedHomeSectionExclusions = config.ManagedHomeSectionExclusions
+                                                  ?? new List<HomeSectionExclusionTracking>();
+            var targetsByUser = desired
+                .GroupBy(section => section.UserId, StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(
+                    group => group.Key,
+                    group => new HashSet<string>(group.Select(section => section.LibraryId), StringComparer.OrdinalIgnoreCase),
+                    StringComparer.OrdinalIgnoreCase);
+
+            foreach (var stale in config.ManagedHomeSectionExclusions.ToList())
+            {
+                if (targetsByUser.TryGetValue(stale.UserId, out var libraries) && libraries.Contains(stale.LibraryId))
+                    continue;
+
+                var restored = false;
+                try
+                {
+                    var internalUserId = _userManager.GetInternalId(stale.UserId);
+                    var sections = _userManager.GetHomeSections(internalUserId, CancellationToken.None)?.Sections
+                                   ?? Array.Empty<ContentSection>();
+                    var section = sections.FirstOrDefault(candidate =>
+                        GetStringProperty(candidate, "Id") == stale.SectionId);
+                    if (section == null)
+                    {
+                        restored = true;
+                    }
+                    else
+                    {
+                        var changed = false;
+                        if (stale.AddedToExcludedFolders)
+                            changed |= UpdateStringArrayProperty(section, "ExcludedFolders", stale.LibraryId, false, out _);
+                        if (stale.AddedToQuery)
+                            changed |= UpdateQueryExcludedViews(section, stale.LibraryId, false, out _);
+                        if (changed)
+                            _userManager.UpdateHomeSection(internalUserId, section, CancellationToken.None);
+                        restored = true;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.Warn("[Most Watched] Could not restore a HomeScreen section exclusion: " + ex.Message);
+                }
+
+                if (restored)
+                    config.ManagedHomeSectionExclusions.Remove(stale);
+            }
+
+            foreach (var userGroup in targetsByUser)
+            {
+                long internalUserId;
+                try
+                {
+                    internalUserId = _userManager.GetInternalId(userGroup.Key);
+                }
+                catch (Exception ex)
+                {
+                    _logger.Warn("[Most Watched] Could not resolve user for HomeScreen filtering: " + ex.Message);
+                    continue;
+                }
+
+                var sections = _userManager.GetHomeSections(internalUserId, CancellationToken.None)?.Sections
+                               ?? Array.Empty<ContentSection>();
+                var ownedSectionIds = new HashSet<string>(
+                    config.ManagedHomeSections
+                        .Where(entry => string.Equals(entry.UserId, userGroup.Key, StringComparison.OrdinalIgnoreCase))
+                        .Select(entry => entry.SectionId)
+                        .Where(id => !string.IsNullOrEmpty(id)),
+                    StringComparer.OrdinalIgnoreCase);
+
+                foreach (var section in sections)
+                {
+                    var sectionId = GetStringProperty(section, "Id");
+                    if (string.IsNullOrEmpty(sectionId) || ownedSectionIds.Contains(sectionId!) ||
+                        (GetStringProperty(section, "CustomName") ?? string.Empty)
+                        .StartsWith(HomeSectionPrefix, StringComparison.OrdinalIgnoreCase))
+                        continue;
+
+                    var changed = false;
+                    foreach (var libraryId in userGroup.Value)
+                    {
+                        var tracking = config.ManagedHomeSectionExclusions.FirstOrDefault(entry =>
+                            string.Equals(entry.UserId, userGroup.Key, StringComparison.OrdinalIgnoreCase) &&
+                            string.Equals(entry.SectionId, sectionId, StringComparison.OrdinalIgnoreCase) &&
+                            string.Equals(entry.LibraryId, libraryId, StringComparison.OrdinalIgnoreCase));
+
+                        var folderChanged = UpdateStringArrayProperty(section, "ExcludedFolders", libraryId, true, out var addedFolder);
+                        var queryChanged = UpdateQueryExcludedViews(section, libraryId, true, out var addedQuery);
+                        changed |= folderChanged || queryChanged;
+
+                        if (tracking == null && (addedFolder || addedQuery))
+                        {
+                            tracking = new HomeSectionExclusionTracking
+                            {
+                                UserId = userGroup.Key,
+                                SectionId = sectionId!,
+                                LibraryId = libraryId
+                            };
+                            config.ManagedHomeSectionExclusions.Add(tracking);
+                        }
+                        if (tracking != null)
+                        {
+                            tracking.AddedToExcludedFolders |= addedFolder;
+                            tracking.AddedToQuery |= addedQuery;
+                        }
+                    }
+                    if (changed)
+                        _userManager.UpdateHomeSection(internalUserId, section, CancellationToken.None);
+                }
+            }
+        }
+
+        private static bool UpdateStringArrayProperty(
+            object instance,
+            string propertyName,
+            string value,
+            bool add,
+            out bool changedValue)
+        {
+            changedValue = false;
+            var property = instance.GetType().GetProperty(propertyName, BindingFlags.Public | BindingFlags.Instance);
+            if (property == null || !property.CanWrite || property.PropertyType != typeof(string[]))
+                return false;
+            var current = property.GetValue(instance, null) as string[] ?? Array.Empty<string>();
+            if (add)
+            {
+                if (current.Contains(value, StringComparer.OrdinalIgnoreCase))
+                    return false;
+                property.SetValue(instance, current.Concat(new[] { value }).ToArray(), null);
+                changedValue = true;
+                return true;
+            }
+
+            var filtered = current.Where(item => !string.Equals(item, value, StringComparison.OrdinalIgnoreCase)).ToArray();
+            if (filtered.Length == current.Length)
+                return false;
+            property.SetValue(instance, filtered, null);
+            changedValue = true;
+            return true;
+        }
+
+        private static bool UpdateQueryExcludedViews(
+            object section,
+            string libraryId,
+            bool add,
+            out bool changedValue)
+        {
+            changedValue = false;
+            var queryProperty = section.GetType().GetProperty("Query", BindingFlags.Public | BindingFlags.Instance);
+            if (queryProperty == null || !queryProperty.CanWrite)
+                return false;
+            var query = queryProperty.GetValue(section, null);
+            if (query == null)
+            {
+                try
+                {
+                    query = Activator.CreateInstance(queryProperty.PropertyType);
+                    queryProperty.SetValue(section, query, null);
+                }
+                catch
+                {
+                    return false;
+                }
+            }
+            if (query == null)
+                return false;
+
+            var excludedProperty = query.GetType().GetProperty("ExcludeUserViewIds", BindingFlags.Public | BindingFlags.Instance);
+            if (excludedProperty == null || !excludedProperty.CanWrite)
+                return false;
+            if (excludedProperty.PropertyType == typeof(string[]))
+                return UpdateStringArrayProperty(query, "ExcludeUserViewIds", libraryId, add, out changedValue);
+            if (excludedProperty.PropertyType == typeof(Guid[]))
+            {
+                if (!Guid.TryParse(libraryId, out var libraryGuid))
+                    return false;
+                var current = excludedProperty.GetValue(query, null) as Guid[] ?? Array.Empty<Guid>();
+                if (add)
+                {
+                    if (current.Contains(libraryGuid))
+                        return false;
+                    excludedProperty.SetValue(query, current.Concat(new[] { libraryGuid }).ToArray(), null);
+                    changedValue = true;
+                    return true;
+                }
+
+                var filtered = current.Where(id => id != libraryGuid).ToArray();
+                if (filtered.Length == current.Length)
+                    return false;
+                excludedProperty.SetValue(query, filtered, null);
+                changedValue = true;
+                return true;
+            }
+            return false;
+        }
+
+        private static ContentSection BuildHomeSection(
+            PluginConfiguration config,
+            DesiredHomeSection wanted,
+            string displayName,
+            ContentSection existing)
+        {
+            var section = existing ?? new ContentSection();
+            SetProperty(section, "SectionType", "items");
+            SetProperty(section, "ParentId", wanted.LibraryId);
+            SetProperty(section, "CustomName", displayName);
+            SetProperty(section, "ItemTypes", new[] { wanted.Kind == "movies" ? "Movie" : "Series" });
+            SetProperty(section, "SortBy", wanted.Kind == "movies"
+                ? config.MovieHomeSectionSortBy : config.TvHomeSectionSortBy);
+            SetProperty(section, "SortOrder", wanted.Kind == "movies"
+                ? config.MovieHomeSectionSortOrder : config.TvHomeSectionSortOrder);
+            SetProperty(section, "ImageType", wanted.Kind == "movies"
+                ? config.MovieHomeSectionImageType : config.TvHomeSectionImageType);
+            SetProperty(section, "MaxItems", 100);
+
+            var queryProperty = typeof(ContentSection).GetProperty("Query", BindingFlags.Public | BindingFlags.Instance);
+            if (queryProperty != null && queryProperty.CanWrite && queryProperty.GetValue(section, null) == null)
+            {
+                try
+                {
+                    queryProperty.SetValue(section, Activator.CreateInstance(queryProperty.PropertyType), null);
+                }
+                catch
+                {
+                }
+            }
+            return section;
+        }
+
+        private List<ManagedLibrary> GetManagedLibraries()
+        {
+            var result = new List<ManagedLibrary>();
+            var folders = _libraryManager.GetVirtualFolders();
+            if (folders == null)
+                return result;
+            foreach (var folder in folders)
+            {
+                var libraryId = Convert.ToString(GetProperty(folder, "ItemId"));
+                var name = Convert.ToString(GetProperty(folder, "Name")) ?? string.Empty;
+                var collectionType = Convert.ToString(GetProperty(folder, "CollectionType")) ?? string.Empty;
+                var locations = GetProperty(folder, "Locations") as IEnumerable<string> ?? Array.Empty<string>();
+                foreach (var location in locations)
+                {
+                    if (string.IsNullOrEmpty(location))
+                        continue;
+                    var manifestPath = Path.Combine(location, ManifestName);
+                    if (!File.Exists(manifestPath))
+                        continue;
+                    var manifest = ReadManagedManifest(manifestPath);
+                    if (manifest == null || manifest.Active == false)
+                        continue;
+                    if (!string.IsNullOrEmpty(manifest.LibraryId) &&
+                        !string.Equals(manifest.LibraryId, libraryId, StringComparison.OrdinalIgnoreCase))
+                        continue;
+
+                    var kind = manifest.Kind;
+                    if (string.IsNullOrEmpty(kind))
+                    {
+                        kind = collectionType.Equals("movies", StringComparison.OrdinalIgnoreCase)
+                            ? "movies"
+                            : collectionType.Equals("tvshows", StringComparison.OrdinalIgnoreCase)
+                                ? "tv_shows" : string.Empty;
+                    }
+                    if (kind != "movies" && kind != "tv_shows")
+                        continue;
+                    result.Add(new ManagedLibrary
+                    {
+                        Id = libraryId ?? string.Empty,
+                        Name = name,
+                        Kind = kind
+                    });
+                }
+            }
+            return result;
+        }
+
+        private static ManagedManifest? ReadManagedManifest(string manifestPath)
+        {
+            try
+            {
+                using (var stream = File.OpenRead(manifestPath))
+                {
+                    var serializer = new DataContractJsonSerializer(typeof(ManagedManifest));
+                    return serializer.ReadObject(stream) as ManagedManifest;
+                }
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private static object? GetProperty(object? instance, string name)
+        {
+            return instance?.GetType().GetProperty(name, BindingFlags.Public | BindingFlags.Instance)?.GetValue(instance, null);
+        }
+
+        private static string? GetStringProperty(object? instance, string name)
+        {
+            return Convert.ToString(GetProperty(instance, name));
+        }
+
+        private static void SetProperty(object instance, string name, object value)
+        {
+            if (instance == null)
+                return;
+            var property = instance.GetType().GetProperty(name, BindingFlags.Public | BindingFlags.Instance);
+            if (property == null || !property.CanWrite)
+                return;
+            if (value == null)
+            {
+                property.SetValue(instance, null, null);
+                return;
+            }
+
+            var destinationType = Nullable.GetUnderlyingType(property.PropertyType) ?? property.PropertyType;
+            object converted = value;
+            if (!destinationType.IsInstanceOfType(value))
+            {
+                if (destinationType.IsEnum)
+                {
+                    converted = Enum.Parse(destinationType, Convert.ToString(value), true);
+                }
+                else if (destinationType == typeof(string))
+                {
+                    converted = Convert.ToString(value);
+                }
+                else
+                {
+                    converted = Convert.ChangeType(value, destinationType);
+                }
+            }
+            property.SetValue(instance, converted, null);
+        }
+
+        private static string TrackingKey(string userId, string kind, string libraryId)
+        {
+            return (userId ?? string.Empty) + "|" + (kind ?? string.Empty) + "|" + (libraryId ?? string.Empty);
+        }
+
+        private sealed class ManagedLibrary
+        {
+            public string Id { get; set; } = string.Empty;
+            public string Name { get; set; } = string.Empty;
+            public string Kind { get; set; } = string.Empty;
+        }
+
+        private sealed class DesiredHomeSection
+        {
+            public string UserId { get; set; } = string.Empty;
+            public string LibraryId { get; set; } = string.Empty;
+            public string LibraryName { get; set; } = string.Empty;
+            public string Kind { get; set; } = string.Empty;
+        }
+
         public void Dispose()
         {
             _libraryManager.ItemAdded -= OnItemChanged;
             _libraryManager.ItemUpdated -= OnItemChanged;
+            _libraryManager.ItemRemoved -= OnItemRemoved;
         }
     }
 }

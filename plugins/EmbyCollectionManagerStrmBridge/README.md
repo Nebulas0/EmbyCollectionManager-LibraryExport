@@ -1,10 +1,12 @@
 # Emby Collection Manager STRM Bridge
 
-This lightweight Emby plugin applies rank names and the generated local poster/thumb images to manager-owned Most Watched `.strm` copies. It also copies an indexed source item's runtime and media streams to episode copies, and queues Emby's remote-content probe for movie `.strm` items. Symlink-only exports are ignored.
+The Emby-side bridge handles Manager-owned Most Watched STRM and symlink exports. It applies rank Sort Names and local images to distinct indexed copies, copies source runtime/stream metadata to STRM episodes, and queues Emby's remote-content probe for STRM movies. It also creates a dedicated per-user HomeScreen section for each active Most Watched output library.
 
-It handles Movie/Episode `.strm` items and Series folders containing `.strm` episodes beneath a library root containing `.most-watched-manifest.json`. It does not modify source media files.
+The HomeScreen section defaults to `SortName` ascending. In the plugin's **Most Watched HomeScreen** page, select users and choose `Primary`/Poster or `Thumb`/Landscape per media type. Enable the corresponding generated image file on the Manager's `/most-watched` page as well. The Manager's output-library selector determines which existing library is scanned; the bridge discovers its active `.most-watched-manifest.json`. It excludes only that target library from the selected users' other HomeScreen sections, preserving those sections' sort settings and all other libraries.
 
-The prebuilt DLL is in `dist/EmbyCollectionManagerStrmBridge.dll`; it was built against Emby 4.10.1.0 reference assemblies and loaded successfully on the accessible 4.10.1.0 server. Playback behavior still needs an end-to-end STRM item to test.
+For symlink output, Emby must index a distinct item under the manager-owned path. If Emby resolves it back to the original item, the bridge deliberately skips modifying its Sort Name or image references to avoid changing source-library metadata/artwork. `.strm` remains the reliable isolated-copy mode in that case. The plugin never modifies source media files.
+
+The prebuilt DLL is in `dist/EmbyCollectionManagerStrmBridge.dll` and is built against Emby 4.10.1.0 reference assemblies. The plugin loads on the accessible 4.10.1.0 server; HomeScreen behavior and playback still need end-to-end testing with populated Most Watched libraries.
 
 Build against the target Emby server's `system` directory:
 

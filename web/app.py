@@ -24,6 +24,7 @@ from src.collection_recipes import RECIPES, CATEGORY_CONFIG
 from src.library_export import (
     DEFAULT_MEDIA_ROOT,
     DEFAULT_OUTPUT_ROOT,
+    MANIFEST_NAME,
     CollectionLibraryExporter,
     validate_library_export_paths,
 )
@@ -209,9 +210,51 @@ def most_watched():
 
     config = load_config()
     settings = normalize_most_watched_settings(config.get('most_watched'))
+    all_libraries = get_emby_libraries()
+    exports = config.get('library_exports') or {}
+    try:
+        output_root = Path(exports.get('output_root') or DEFAULT_OUTPUT_ROOT).resolve()
+    except (OSError, RuntimeError):
+        output_root = Path(DEFAULT_OUTPUT_ROOT).resolve()
+
+    def is_managed_export_library(library):
+        locations = library.get('Locations') or []
+        if len(locations) != 1 or not isinstance(locations[0], str):
+            return False
+        raw_location = Path(locations[0])
+        if raw_location.is_symlink():
+            return False
+        try:
+            location = raw_location.resolve()
+        except (OSError, RuntimeError):
+            return False
+        if (location / MANIFEST_NAME).is_file() and not (location / '.most-watched-manifest.json').is_file():
+            return False
+        try:
+            location.relative_to(output_root)
+            return location != output_root
+        except ValueError:
+            return False
+
+    target_movie_libraries = [
+        library for library in all_libraries
+        if str(library.get('CollectionType', '')).lower() == 'movies'
+        and is_managed_export_library(library)
+    ]
+    target_tv_libraries = [
+        library for library in all_libraries
+        if str(library.get('CollectionType', '')).lower() == 'tvshows'
+        and is_managed_export_library(library)
+    ]
+    output_library_ids = {
+        str(library.get('Id'))
+        for library in all_libraries
+        if library.get('Name') in {'Most Watched Movies-library', 'Most Watched TV Shows-library'}
+        or is_managed_export_library(library)
+    }
     available_libraries = [
-        library for library in get_emby_libraries()
-        if library.get('Name') not in {'Most Watched Movies-library', 'Most Watched TV Shows-library'}
+        library for library in all_libraries
+        if str(library.get('Id')) not in output_library_ids
     ]
     movie_libraries = [
         library for library in available_libraries
@@ -233,6 +276,7 @@ def most_watched():
                 'days': request.form.get('movies_days', 14),
                 'limit': request.form.get('movies_limit', 10),
                 'library_ids': request.form.getlist('movies_library_ids'),
+                'target_library_id': request.form.get('movies_target_library_id') or None,
                 'output_mode': request.form.get('movies_output_mode', 'symlink'),
                 'image_variants': request.form.getlist('movies_image_variants'),
                 'badge_style': request.form.get('movies_badge_style', 'neutral'),
@@ -242,6 +286,7 @@ def most_watched():
                 'days': request.form.get('tv_shows_days', 14),
                 'limit': request.form.get('tv_shows_limit', 10),
                 'library_ids': request.form.getlist('tv_shows_library_ids'),
+                'target_library_id': request.form.get('tv_shows_target_library_id') or None,
                 'output_mode': request.form.get('tv_shows_output_mode', 'symlink'),
                 'image_variants': request.form.getlist('tv_shows_image_variants'),
                 'badge_style': request.form.get('tv_shows_badge_style', 'neutral'),
@@ -249,8 +294,20 @@ def most_watched():
         }
         settings = normalize_most_watched_settings(submitted)
         valid_ids = {
-            'movies': {str(library.get('Id')) for library in movie_libraries},
-            'tv_shows': {str(library.get('Id')) for library in tv_libraries},
+            'movies': {
+                str(library.get('Id')) for library in all_libraries
+                if str(library.get('CollectionType', '')).lower() == 'movies'
+                and str(library.get('Id')) not in output_library_ids
+            },
+            'tv_shows': {
+                str(library.get('Id')) for library in all_libraries
+                if str(library.get('CollectionType', '')).lower() == 'tvshows'
+                and str(library.get('Id')) not in output_library_ids
+            },
+        }
+        valid_target_ids = {
+            'movies': {str(library.get('Id')) for library in target_movie_libraries},
+            'tv_shows': {str(library.get('Id')) for library in target_tv_libraries},
         }
         invalid_selection = any(
             section['enabled'] and (
@@ -258,9 +315,17 @@ def most_watched():
                 or not set(section['library_ids']).issubset(valid_ids[kind])
             )
             for kind, section in settings.items()
+        ) or any(
+            section.get('target_library_id')
+            and str(section['target_library_id']) not in valid_target_ids[kind]
+            for kind, section in settings.items()
+        ) or any(
+            section.get('target_library_id')
+            and str(section['target_library_id']) in set(section.get('library_ids') or [])
+            for section in settings.values()
         )
         if invalid_selection:
-            error = 'Choose at least one matching Emby source library for each enabled media type.'
+            error = 'Choose valid source libraries and an existing output library folder inside the configured export root.'
         else:
             most_watched_config = config.get('most_watched')
             most_watched_config = dict(most_watched_config) if isinstance(most_watched_config, dict) else {}
@@ -294,6 +359,8 @@ def most_watched():
         results=results,
         movie_libraries=movie_libraries,
         tv_libraries=tv_libraries,
+        target_movie_libraries=target_movie_libraries,
+        target_tv_libraries=target_tv_libraries,
         plugin_available=plugin_available,
         plugin_message=plugin_message,
         auto_create_emby_library=most_watched_auto_create,

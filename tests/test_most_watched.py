@@ -93,10 +93,12 @@ class MostWatchedSettingsTests(unittest.TestCase):
             {
                 'movies': {
                     'enabled': False, 'days': 14, 'limit': 10, 'library_ids': None,
+                    'target_library_id': None,
                     'output_mode': 'symlink', 'image_variants': ['poster', 'thumb'], 'badge_style': 'neutral',
                 },
                 'tv_shows': {
                     'enabled': False, 'days': 14, 'limit': 10, 'library_ids': None,
+                    'target_library_id': None,
                     'output_mode': 'symlink', 'image_variants': ['poster', 'thumb'], 'badge_style': 'neutral',
                 },
             },
@@ -107,10 +109,12 @@ class MostWatchedSettingsTests(unittest.TestCase):
         })
         self.assertEqual(settings['movies'], {
             'enabled': True, 'days': 3650, 'limit': 1, 'library_ids': None,
+            'target_library_id': None,
             'output_mode': 'symlink', 'image_variants': ['poster', 'thumb'], 'badge_style': 'neutral',
         })
         self.assertEqual(settings['tv_shows'], {
             'enabled': False, 'days': 14, 'limit': 100, 'library_ids': None,
+            'target_library_id': None,
             'output_mode': 'symlink', 'image_variants': ['poster', 'thumb'], 'badge_style': 'neutral',
         })
 
@@ -261,6 +265,7 @@ class PlaybackReportingClientTests(unittest.TestCase):
             'output_mode': 'symlink',
             'image_variants': ['poster', 'thumb'],
             'badge_style': 'neutral',
+            'target_library_id': None,
         })
         self.assertEqual(state['movies'][0]['plays'], 8)
         self.assertEqual(saved['movies'][0]['rank'], 1)
@@ -325,6 +330,58 @@ class MostWatchedLibraryExporterTests(unittest.TestCase):
             media_mount_root=self.base,
             output_mount_root=self.base,
         )
+
+    def test_selected_output_library_is_used_and_refreshed_by_id(self):
+        emby = FakeEmby()
+        target_dir = self.output_root / 'Top Played Movies'
+        emby.libraries = [{
+            'Id': 'top-movies-id',
+            'Name': 'Top Played Movies',
+            'CollectionType': 'movies',
+            'Locations': [str(target_dir)],
+        }]
+        exporter = self.make_exporter(emby)
+        movie_dir = self.media_root / 'movies' / 'Sorted Movie (2024)'
+        movie_dir.mkdir(parents=True)
+        movie_path = movie_dir / 'Sorted Movie.mkv'
+        movie_path.write_bytes(b'movie')
+        item = {
+            'Id': 'movie-id',
+            'Type': 'Movie',
+            'Name': 'Sorted Movie',
+            'ProductionYear': 2024,
+            'Path': str(movie_path),
+            'ProviderIds': {'Imdb': 'tt1234567'},
+        }
+
+        result = exporter.sync(
+            'movies',
+            [{'item': item, 'name': item['Name'], 'plays': 3, 'watch_seconds': 1000}],
+            create_emby_library=True,
+            target_library_id='top-movies-id',
+        )
+
+        self.assertEqual(result['library_name'], 'Top Played Movies')
+        self.assertEqual(result['library_path'], str(target_dir))
+        self.assertEqual(result['library_id'], 'top-movies-id')
+        self.assertEqual(emby.created_libraries, [])
+        self.assertEqual(emby.refreshed, ['top-movies-id'])
+        self.assertEqual(emby.refreshed_by_name, [])
+        manifest = json.loads((target_dir / '.most-watched-manifest.json').read_text())
+        self.assertEqual(manifest['kind'], 'movies')
+        self.assertEqual(manifest['library_id'], 'top-movies-id')
+
+    def test_selected_output_library_must_be_inside_configured_export_root(self):
+        emby = FakeEmby()
+        emby.libraries = [{
+            'Id': 'unsafe-id',
+            'Name': 'Unsafe',
+            'CollectionType': 'movies',
+            'Locations': [str(self.media_root / 'movies')],
+        }]
+
+        with self.assertRaisesRegex(ValueError, 'inside the configured export root'):
+            self.make_exporter(emby)._library_dir('movies', 'unsafe-id')
 
     def test_ranked_movie_symlink_has_badged_poster_and_never_copies_media(self):
         emby = FakeEmby()

@@ -113,13 +113,63 @@ class LibraryExportSettingsTests(unittest.TestCase):
         saved = yaml.safe_load(Path(web_app.CONFIG_PATH).read_text(encoding='utf-8'))
         self.assertEqual(saved['most_watched']['movies'], {
             'enabled': True, 'days': 21, 'limit': 12, 'library_ids': ['movie-lib'],
+            'target_library_id': None,
             'output_mode': 'strm', 'image_variants': ['poster', 'thumb'], 'badge_style': 'ocean-blue',
         })
         self.assertEqual(saved['most_watched']['tv_shows'], {
             'enabled': True, 'days': 14, 'limit': 8, 'library_ids': ['tv-lib'],
+            'target_library_id': None,
             'output_mode': 'symlink', 'image_variants': ['poster'], 'badge_style': 'soft-red',
         })
         self.assertFalse(saved['most_watched']['auto_create_emby_library'])
+
+    def test_most_watched_can_target_existing_export_library_for_refresh(self):
+        libraries = [
+            {'Id': 'movies-source', 'Name': 'Movies', 'CollectionType': 'movies', 'Locations': ['/media/movies']},
+            {
+                'Id': 'top-movies',
+                'Name': 'Top Played Movies',
+                'CollectionType': 'movies',
+                'Locations': ['/mnt/local/exports/Top Played Movies'],
+            },
+        ]
+        with patch.object(web_app, 'DEFAULT_OUTPUT_ROOT', '/mnt/local/exports'), patch.object(
+            web_app,
+            'get_emby_libraries',
+            return_value=libraries,
+        ):
+            response = self.client.post('/most-watched', data={
+                'movies_enabled': 'on',
+                'movies_days': '14',
+                'movies_limit': '10',
+                'movies_library_ids': 'movies-source',
+                'movies_target_library_id': 'top-movies',
+                'movies_output_mode': 'symlink',
+                'movies_image_variants': ['poster', 'thumb'],
+                'movies_badge_style': 'neutral',
+            })
+
+        self.assertEqual(response.status_code, 200)
+        saved = yaml.safe_load(Path(web_app.CONFIG_PATH).read_text(encoding='utf-8'))
+        self.assertEqual(saved['most_watched']['movies']['target_library_id'], 'top-movies')
+
+    def test_most_watched_target_selector_is_visible(self):
+        libraries = [{
+            'Id': 'top-movies',
+            'Name': 'Top Played Movies',
+            'CollectionType': 'movies',
+            'Locations': ['/mnt/local/exports/Top Played Movies'],
+        }]
+        with patch.object(web_app, 'DEFAULT_OUTPUT_ROOT', '/mnt/local/exports'), patch.object(
+            web_app,
+            'get_emby_libraries',
+            return_value=libraries,
+        ):
+            response = self.client.get('/most-watched')
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b'name="movies_target_library_id"', response.data)
+        self.assertIn(b'Top Played Movies', response.data)
 
     def test_most_watched_page_shows_default_values_and_plugin_setup_hint(self):
         response = self.client.get('/most-watched')

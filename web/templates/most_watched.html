@@ -33,7 +33,7 @@
                    {% if auto_create_emby_library %}checked{% endif %}>
             <span>Automatically create the Most Watched Emby libraries</span>
         </label>
-        <p class="mw-help">When off, the ranked export folders are still maintained for manual library setup. Existing Emby libraries are never removed. This Most Watched option is independent of the global collection-export setting.</p>
+        <p class="mw-help">When off, the ranked export folders are still maintained for manual library setup. Existing Emby libraries are never removed. This Most Watched option is independent of the global collection-export setting. A selected existing output library below is always reused and refreshed directly.</p>
     </section>
     <div class="mw-grid">
         {% for key, label in [('movies', 'Movies'), ('tv_shows', 'TV Shows')] %}
@@ -85,7 +85,7 @@
             </div>
             {% set selected_images = section.get('image_variants', ['poster', 'thumb']) %}
             <div class="mw-image-variants">
-                <strong>Ranked image versions</strong>
+                <strong>Ranked image files to generate</strong>
                 <div>
                     <label>
                         <input type="checkbox" name="{{ key }}_image_variants" value="poster"
@@ -98,8 +98,22 @@
                         <span>Thumb / landscape</span>
                     </label>
                 </div>
-                <p class="mw-help">The selected images are generated in the export folder; source artwork stays unchanged.</p>
+                <p class="mw-help">These choices generate local Poster and/or Thumb/Landscape files; source artwork stays unchanged. Which one Emby's HomeScreen displays is configured separately in the STRM Bridge plugin.</p>
             </div>
+            {% set target_library_options = target_movie_libraries if key == 'movies' else target_tv_libraries %}
+            <label class="mw-target-library">
+                <span>Existing output library to display in Emby (optional)</span>
+                <select name="{{ key }}_target_library_id">
+                    <option value="">Use the default Most Watched output library</option>
+                    {% for library in target_library_options %}
+                    <option value="{{ library.get('Id') }}"
+                            {% if section.get('target_library_id') == (library.get('Id')|string) %}selected{% endif %}>
+                        {{ library.get('Name', 'Unnamed library') }}
+                    </option>
+                    {% endfor %}
+                </select>
+                <small class="mw-help">Select an existing Movies/TV library whose single folder is inside the configured export root. The manager writes its ranked files there and refreshes only that library. If blank, the current default folder/library name is used.</small>
+            </label>
             {% set selected_library_ids = section.get('library_ids') %}
             {% set library_options = movie_libraries if key == 'movies' else tv_libraries %}
             <div class="mw-library-selection">
@@ -200,6 +214,9 @@
     .mw-fields { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:14px; margin-top:18px; }
     .mw-fields label { display:flex; flex-direction:column; gap:7px; font-size:.88rem; }
     .mw-fields input, .mw-fields select { border:1px solid #cbd5e1; border-radius:6px; padding:9px 10px; background:#fff; color:#17202a; }
+    .mw-target-library { display:flex; flex-direction:column; gap:7px; margin-top:16px; font-size:.88rem; }
+    .mw-target-library select { border:1px solid #cbd5e1; border-radius:6px; padding:9px 10px; background:#fff; color:#17202a; }
+    .mw-target-library .mw-help { margin:0; }
     .mw-image-variants { margin-top:14px; font-size:.88rem; }
     .mw-image-variants > div { display:flex; gap:18px; flex-wrap:wrap; margin-top:8px; }
     .mw-image-variants label { display:flex; align-items:center; gap:7px; }
