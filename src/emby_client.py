@@ -339,11 +339,35 @@ class EmbyClient(MediaServerClient):
         sort_by: str = 'ProductionYear',
         sort_order: str = 'Descending',
     ) -> bool:
-        if not collection_id or not self.user_id or not client:
+        list_sorted = self._update_display_preferences(
+            'BoxSet',
+            client,
+            'SortName',
+            'Ascending',
+        )
+        items_sorted = self._update_display_preferences(
+            str(collection_id),
+            client,
+            sort_by,
+            sort_order,
+        )
+        return list_sorted and items_sorted
+
+    def _update_display_preferences(
+        self,
+        display_preferences_id: str,
+        client: str,
+        sort_by: str,
+        sort_order: str,
+    ) -> bool:
+        if not display_preferences_id or not self.user_id or not client:
             return False
-        if hasattr(self, '_temp_collections') and collection_id in self._temp_collections:
+        cache = getattr(self, '_display_preferences_cache', set())
+        cache_key = (display_preferences_id, client, sort_by, sort_order)
+        if cache_key in cache:
             return True
-        url = f'{self.server_url}/DisplayPreferences/{collection_id}'
+
+        url = f'{self.server_url}/DisplayPreferences/{display_preferences_id}'
         params = {'UserId': self.user_id, 'Client': client}
         try:
             current_response = self.session.get(url, params=params, timeout=15)
@@ -352,13 +376,20 @@ class EmbyClient(MediaServerClient):
                 current_data = current_response.json()
                 if isinstance(current_data, dict):
                     current = current_data
-            if (
-                current.get('SortBy') == sort_by
-                and current.get('SortOrder') == sort_order
-            ):
+            elif current_response.status_code != 404:
+                logger.warning(
+                    "Emby could not read display preferences for %s (HTTP %s)",
+                    display_preferences_id,
+                    current_response.status_code,
+                )
+                return False
+            if current.get('SortBy') == sort_by and current.get('SortOrder') == sort_order:
+                cache.add(cache_key)
+                self._display_preferences_cache = cache
                 return True
+
             payload = {
-                'Id': current.get('Id') or str(collection_id),
+                'Id': current.get('Id') or str(display_preferences_id),
                 'Client': client,
                 'SortBy': sort_by,
                 'SortOrder': sort_order,
@@ -371,16 +402,18 @@ class EmbyClient(MediaServerClient):
                 timeout=20,
             )
             if response.status_code in (200, 204):
+                cache.add(cache_key)
+                self._display_preferences_cache = cache
                 return True
             logger.warning(
-                "Emby could not set collection item sorting for %s (HTTP %s)",
-                collection_id,
+                "Emby could not set display preferences for %s (HTTP %s)",
+                display_preferences_id,
                 response.status_code,
             )
         except (requests.RequestException, ValueError) as exc:
             logger.warning(
-                "Could not set collection item sorting for %s: %s",
-                collection_id,
+                "Could not set display preferences for %s: %s",
+                display_preferences_id,
                 exc,
             )
         return False

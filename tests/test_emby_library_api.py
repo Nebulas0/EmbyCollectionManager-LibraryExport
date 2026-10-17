@@ -1,5 +1,5 @@
 import unittest
-from unittest.mock import Mock
+from unittest.mock import Mock, call
 
 from src.emby_client import EmbyClient
 
@@ -105,36 +105,68 @@ class EmbyLibraryApiTests(unittest.TestCase):
         )
 
     def test_collection_item_sort_is_saved_per_user_client_and_preserves_custom_prefs(self):
-        self.client.session.get = Mock(return_value=Mock(
-            status_code=200,
-            json=Mock(return_value={
+        self.client.session.get = Mock(side_effect=[
+            Mock(status_code=200, json=Mock(return_value={
+                'Id': 'BoxSet',
+                'Client': 'Emby Web',
+                'SortOrder': 'Ascending',
+                'CustomPrefs': {},
+            })),
+            Mock(status_code=200, json=Mock(return_value={
                 'Id': 'box-id',
                 'Client': 'Emby Web',
                 'SortBy': 'SortName',
                 'SortOrder': 'Ascending',
                 'CustomPrefs': {'view': 'poster'},
-            }),
-        ))
+            })),
+        ])
         self.client.session.post = Mock(return_value=Mock(status_code=204))
 
         self.assertTrue(self.client.update_collection_item_sort('box-id'))
 
-        self.client.session.get.assert_called_once_with(
-            'http://emby.invalid/DisplayPreferences/box-id',
-            params={'UserId': 'user', 'Client': 'Emby Web'},
-            timeout=15,
+        self.assertEqual(
+            self.client.session.get.call_args_list,
+            [
+                call(
+                    'http://emby.invalid/DisplayPreferences/BoxSet',
+                    params={'UserId': 'user', 'Client': 'Emby Web'},
+                    timeout=15,
+                ),
+                call(
+                    'http://emby.invalid/DisplayPreferences/box-id',
+                    params={'UserId': 'user', 'Client': 'Emby Web'},
+                    timeout=15,
+                ),
+            ],
         )
-        self.client.session.post.assert_called_once_with(
-            'http://emby.invalid/DisplayPreferences/box-id',
-            params={'UserId': 'user'},
-            json={
-                'Id': 'box-id',
-                'Client': 'Emby Web',
-                'SortBy': 'ProductionYear',
-                'SortOrder': 'Descending',
-                'CustomPrefs': {'view': 'poster'},
-            },
-            timeout=20,
+        self.assertEqual(
+            self.client.session.post.call_args_list,
+            [
+                call(
+                    'http://emby.invalid/DisplayPreferences/BoxSet',
+                    params={'UserId': 'user'},
+                    json={
+                        'Id': 'BoxSet',
+                        'Client': 'Emby Web',
+                        'SortBy': 'SortName',
+                        'SortOrder': 'Ascending',
+                        'CustomPrefs': {},
+                    },
+                    timeout=20,
+                ),
+                call(
+                    'http://emby.invalid/DisplayPreferences/box-id',
+                    params={'UserId': 'user'},
+                    json={
+                        'Id': 'box-id',
+                        'Client': 'Emby Web',
+                        'SortBy': 'ProductionYear',
+                        'SortOrder': 'Descending',
+                        'CustomPrefs': {'view': 'poster'},
+                    },
+                    timeout=20,
+                ),
+            ],
         )
 
     def test_seasonal_delete_refuses_non_boxsets_and_path_backed_items(self):
