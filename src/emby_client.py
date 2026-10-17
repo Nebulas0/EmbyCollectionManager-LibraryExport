@@ -1,12 +1,13 @@
 from typing import List, Optional, Dict, Any, Tuple
 import uuid
 import logging
+import mimetypes
 import re
 import requests
 import os
 import sys
-from typing import List, Dict, Any, Optional
-from urllib.parse import quote
+from typing import List, Dict, Any, Optional, Tuple
+from urllib.parse import quote, unquote, urlparse
 
 from .base_media_server_client import MediaServerClient
 from .poster_generator import generate_custom_poster, file_to_url
@@ -883,6 +884,32 @@ class EmbyClient(MediaServerClient):
             return False
 
     
+    @staticmethod
+    def _download_artwork_url(image_url: str) -> Tuple[bytes, str]:
+        parsed = urlparse(image_url)
+        if parsed.scheme == 'file':
+            file_path = unquote(parsed.path)
+            with open(file_path, 'rb') as image_file:
+                image_data = image_file.read()
+            return image_data, mimetypes.guess_type(file_path)[0] or 'image/jpeg'
+
+        headers = {
+            'User-Agent': (
+                'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
+                'AppleWebKit/537.36 (KHTML, like Gecko) '
+                'Chrome/120.0 Safari/537.36'
+            ),
+            'Accept': 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
+        }
+        if (parsed.hostname or '').lower() in {'theposterdb.com', 'www.theposterdb.com'}:
+            headers['Referer'] = 'https://theposterdb.com/'
+        response = requests.get(image_url, headers=headers, timeout=20)
+        response.raise_for_status()
+        content_type = response.headers.get('Content-Type', 'image/jpeg').split(';', 1)[0].strip().lower()
+        if not content_type.startswith('image/'):
+            raise ValueError(f'Artwork URL returned non-image content type: {content_type}')
+        return response.content, content_type
+
     def update_collection_artwork(self, collection_id: str, poster_url: Optional[str]=None, backdrop_url: Optional[str]=None, category_id: Optional[int]=None) -> bool:
         """
         Update artwork for an Emby collection using external image URLs.
@@ -1142,111 +1169,45 @@ class EmbyClient(MediaServerClient):
         if poster_url:
             logger.info(f"Attempting to set poster for {collection_id} with URL: {poster_url}")
             try:
-                # Download image from URL first
-                try:
-                    # Handle local file URLs differently from HTTP URLs
-                    if poster_url.startswith('file://'):
-                        # For local files, read the file directly instead of using requests
-                        try:
-                            file_path = poster_url[7:]  # Remove 'file://' prefix
-                            with open(file_path, 'rb') as f:
-                                image_data = f.read()
-                            logger.debug(f"Successfully read local file: {file_path}")
-                        except Exception as e:
-                            logger.error(f"Error reading local file {file_path}: {e}")
-                            raise
-                    else:
-                        # For remote URLs, use requests as normal
-                        image_response = requests.get(poster_url, timeout=15)
-                        image_response.raise_for_status()
-                        image_data = image_response.content
-                    
-                    # Determine content type based on URL
-                    if poster_url.lower().endswith('.jpg') or poster_url.lower().endswith('.jpeg'):
-                        content_type = 'image/jpeg'
-                    elif poster_url.lower().endswith('.png'):
-                        content_type = 'image/png'
-                    else:
-                        content_type = 'image/jpeg'  # Default to JPEG
-                    
-                    # Convert image data to Base64 string - THIS IS CRITICAL
-                    import base64
-                    image_data_base64 = base64.b64encode(image_data).decode('utf-8')
-                    
-                    # Use the working endpoint pattern that was confirmed to work
-                    url = f"{self.server_url}/Items/{collection_id}/Images/Primary?api_key={self.api_key}"
-                    logger.info(f"Updating poster for collection {collection_id}")
-                    
-                    # Send the Base64-encoded image data with content type header
-                    response = self.session.post(url, data=image_data_base64, 
-                                                headers={'Content-Type': content_type}, 
-                                                timeout=15)
-                    
-                    if response.status_code in [200, 204]:
-                        success = True
-                        logger.info(f"Poster update successful (status: {response.status_code})")
-                    else:
-                        logger.error(f"Failed to update poster (status: {response.status_code}) - {response.text}")
-                        
-                except requests.RequestException as e:
-                    logger.error(f"Error downloading/uploading image from URL {poster_url}: {e}")
+                image_data, content_type = self._download_artwork_url(poster_url)
+                import base64
+                image_data_base64 = base64.b64encode(image_data).decode('utf-8')
+                url = f"{self.server_url}/Items/{collection_id}/Images/Primary?api_key={self.api_key}"
+                response = self.session.post(
+                    url,
+                    data=image_data_base64,
+                    headers={'Content-Type': content_type},
+                    timeout=15,
+                )
+                if response.status_code in [200, 204]:
+                    success = True
+                    logger.info(f"Poster update successful (status: {response.status_code})")
+                else:
+                    logger.error(f"Failed to update poster (status: {response.status_code}) - {response.text}")
             except Exception as e:
-                logger.error(f"Error updating collection poster: {e}")
+                logger.error("Error downloading/uploading poster from URL %s: %s", poster_url, e)
             
         # Update backdrop if provided - using direct binary upload like Posterizarr
         if backdrop_url:
             logger.info(f"Attempting to set backdrop for {collection_id} with URL: {backdrop_url}")
             try:
-                # Download image from URL first
-                try:
-                    # Handle local file URLs differently from HTTP URLs
-                    if backdrop_url.startswith('file://'):
-                        # For local files, read the file directly instead of using requests
-                        try:
-                            file_path = backdrop_url[7:]  # Remove 'file://' prefix
-                            with open(file_path, 'rb') as f:
-                                image_data = f.read()
-                            logger.debug(f"Successfully read local file: {file_path}")
-                        except Exception as e:
-                            logger.error(f"Error reading local file {file_path}: {e}")
-                            raise
-                    else:
-                        # For remote URLs, use requests as normal
-                        image_response = requests.get(backdrop_url, timeout=15)
-                        image_response.raise_for_status()
-                        image_data = image_response.content
-                    
-                    # Determine content type based on URL
-                    if backdrop_url.lower().endswith('.jpg') or backdrop_url.lower().endswith('.jpeg'):
-                        content_type = 'image/jpeg'
-                    elif backdrop_url.lower().endswith('.png'):
-                        content_type = 'image/png'
-                    else:
-                        content_type = 'image/jpeg'  # Default to JPEG
-                    
-                    # Convert image data to Base64 string - THIS IS CRITICAL
-                    import base64
-                    image_data_base64 = base64.b64encode(image_data).decode('utf-8')
-                    
-                    # Use the working endpoint pattern that was confirmed to work
-                    url = f"{self.server_url}/Items/{collection_id}/Images/Backdrop?api_key={self.api_key}"
-                    logger.info(f"Updating backdrop for collection {collection_id}")
-                    
-                    # Send the Base64-encoded image data with content type header
-                    response = self.session.post(url, data=image_data_base64, 
-                                                headers={'Content-Type': content_type}, 
-                                                timeout=15)
-                    
-                    if response.status_code in [200, 204]:
-                        success = True
-                        logger.info(f"Backdrop update successful (status: {response.status_code})")
-                    else:
-                        logger.error(f"Failed to update backdrop (status: {response.status_code}) - {response.text}")
-                        
-                except requests.RequestException as e:
-                    logger.error(f"Error downloading/uploading image from URL {backdrop_url}: {e}")
+                image_data, content_type = self._download_artwork_url(backdrop_url)
+                import base64
+                image_data_base64 = base64.b64encode(image_data).decode('utf-8')
+                url = f"{self.server_url}/Items/{collection_id}/Images/Backdrop?api_key={self.api_key}"
+                response = self.session.post(
+                    url,
+                    data=image_data_base64,
+                    headers={'Content-Type': content_type},
+                    timeout=15,
+                )
+                if response.status_code in [200, 204]:
+                    success = True
+                    logger.info(f"Backdrop update successful (status: {response.status_code})")
+                else:
+                    logger.error(f"Failed to update backdrop (status: {response.status_code}) - {response.text}")
             except Exception as e:
-                logger.error(f"Error updating collection backdrop: {e}")
+                logger.error("Error downloading/uploading backdrop from URL %s: %s", backdrop_url, e)
             
         return success
 

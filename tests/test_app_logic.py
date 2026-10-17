@@ -4,6 +4,7 @@ from unittest.mock import patch
 from src.app_logic import (
     _apply_collection_sorting,
     _expire_seasonal_collection,
+    _should_generate_list_backdrop,
     _sync_collection,
     _sync_library_export,
 )
@@ -44,6 +45,11 @@ class OrderedCollectionClient(EmptyCollectionClient):
 
 
 class SyncCollectionTests(unittest.TestCase):
+    def test_custom_poster_does_not_trigger_an_unrequested_backdrop_fallback(self):
+        self.assertFalse(_should_generate_list_backdrop('https://poster.test/poster', None, [1]))
+        self.assertFalse(_should_generate_list_backdrop(None, 'https://poster.test/backdrop', [1]))
+        self.assertTrue(_should_generate_list_backdrop(None, None, [1]))
+
     def test_empty_results_preserve_default_and_clear_only_when_opted_in(self):
         default_client = EmptyCollectionClient()
         opted_in_client = EmptyCollectionClient()

@@ -1,5 +1,5 @@
 import unittest
-from unittest.mock import Mock, call
+from unittest.mock import Mock, call, patch
 
 from src.emby_client import EmbyClient
 
@@ -131,6 +131,46 @@ class EmbyLibraryApiTests(unittest.TestCase):
             'http://emby.invalid/Items/box-id',
         )
         self.assertEqual(self.client.session.post.call_args.kwargs['timeout'], 20)
+
+    def test_custom_poster_url_uploads_to_primary_with_server_image_mime_type(self):
+        self.client.session.post = Mock(return_value=Mock(status_code=204))
+        poster_response = Mock(
+            status_code=200,
+            content=b'png-poster',
+            headers={'Content-Type': 'image/png'},
+        )
+        backdrop_response = Mock(
+            status_code=200,
+            content=b'jpeg-backdrop',
+            headers={'Content-Type': 'image/jpeg'},
+        )
+        with patch(
+            'src.emby_client.requests.get',
+            side_effect=[poster_response, backdrop_response],
+        ) as download:
+            self.assertTrue(self.client.update_collection_artwork(
+                'collection-id',
+                'https://theposterdb.com/api/assets/532898',
+                'https://example.test/backdrop',
+            ))
+
+        poster_request = download.call_args_list[0]
+        self.assertEqual(
+            poster_request.args[0],
+            'https://theposterdb.com/api/assets/532898',
+        )
+        self.assertEqual(poster_request.kwargs['headers']['Referer'], 'https://theposterdb.com/')
+        self.assertIn('Mozilla', poster_request.kwargs['headers']['User-Agent'])
+        self.assertIn('/Images/Primary?', self.client.session.post.call_args_list[0].args[0])
+        self.assertEqual(
+            self.client.session.post.call_args_list[0].kwargs['headers']['Content-Type'],
+            'image/png',
+        )
+        self.assertIn('/Images/Backdrop?', self.client.session.post.call_args_list[1].args[0])
+        self.assertEqual(
+            self.client.session.post.call_args_list[1].kwargs['headers']['Content-Type'],
+            'image/jpeg',
+        )
 
     def test_collection_item_sort_is_saved_per_user_client_and_preserves_custom_prefs(self):
         self.client._make_api_request = Mock(return_value={

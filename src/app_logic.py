@@ -191,7 +191,7 @@ def main():
                             poster_url = collection_info.get('poster_url')  # Custom poster from YAML
                             
                             # Get backdrop from a random movie if not set in YAML
-                            if not backdrop_url and tmdb_ids:
+                            if _should_generate_list_backdrop(poster_url, backdrop_url, tmdb_ids):
                                 try:
                                     representative_movie_id = random.choice(tmdb_ids)
                                     movie_details = tmdb.get_movie_details(representative_movie_id)
@@ -281,7 +281,7 @@ def main():
                             backdrop_url = collection_info.get('backdrop_url')
                             poster_url = collection_info.get('poster_url')
                             
-                            if not backdrop_url and tmdb_ids:
+                            if _should_generate_list_backdrop(poster_url, backdrop_url, tmdb_ids):
                                 try:
                                     representative_movie_id = random.choice(tmdb_ids)
                                     movie_details = tmdb.get_movie_details(representative_movie_id)
@@ -695,6 +695,11 @@ def get_random_movie_artwork(tmdb_client, tmdb_ids, collection_name):
     except Exception as e:
         logger.error(f"Error fetching artwork for movie ID {selected_movie_id}: {e}")
         return None, None
+
+
+def _should_generate_list_backdrop(poster_url, backdrop_url, tmdb_ids):
+    return bool(tmdb_ids) and not poster_url and not backdrop_url
+
 
 def _sync_collection(
     server_client,
