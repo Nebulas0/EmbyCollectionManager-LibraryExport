@@ -89,7 +89,7 @@ class PlaybackReportingClient:
 
     def __init__(self, emby_client):
         self.emby = emby_client
-        self._ignored_user_ids: Optional[set] = None
+        self._playback_user_ids: Optional[List[str]] = None
 
     def _request_json(self, endpoint: str, params: Optional[Dict[str, Any]] = None) -> Any:
         base = self.emby.server_url.rstrip('/')
@@ -135,41 +135,35 @@ class PlaybackReportingClient:
         except PlaybackReportingError as exc:
             return False, str(exc)
 
-    @staticmethod
-    def _user_key(value: Any) -> str:
-        return str(value or '').replace('-', '').lower()
-
-    def _ignored_users(self) -> set:
-        if self._ignored_user_ids is None:
+    def _playback_users(self) -> List[str]:
+        if self._playback_user_ids is None:
             user_rows = self._request_json('/user_usage_stats/user_list')
             if not isinstance(user_rows, list):
                 raise PlaybackReportingError('Playback Reporting returned an unexpected user-list format.')
-            self._ignored_user_ids = {
-                self._user_key(row.get('id'))
+            self._playback_user_ids = [
+                str(row['id']).replace('-', '')
                 for row in user_rows
-                if isinstance(row, dict) and row.get('in_list')
-            }
-        return self._ignored_user_ids
+                if isinstance(row, dict) and row.get('id') and not row.get('in_list')
+            ]
+        return self._playback_user_ids
 
     def get_playback_events(self, days: int) -> List[Dict[str, Any]]:
-        rows = self._request_json(
-            '/user_usage_stats/UserPlaylist',
-            params={
-                'user_id': '',
-                'aggregate_data': 'false',
-                'days': int(days),
-            },
-        )
-        if not isinstance(rows, list):
-            raise PlaybackReportingError('Playback Reporting returned an unexpected playback-event format.')
-        if len(rows) > 100000:
-            raise PlaybackReportingError('Playback Reporting returned too many events for one refresh.')
-        ignored_users = self._ignored_users()
-        return [
-            row for row in rows
-            if isinstance(row, dict)
-            and self._user_key(row.get('user_id')) not in ignored_users
-        ]
+        rows = []
+        for user_id in self._playback_users():
+            user_rows = self._request_json(
+                '/user_usage_stats/UserPlaylist',
+                params={
+                    'user_id': user_id,
+                    'aggregate_data': 'false',
+                    'days': int(days),
+                },
+            )
+            if not isinstance(user_rows, list):
+                raise PlaybackReportingError('Playback Reporting returned an unexpected playback-event format.')
+            rows.extend(row for row in user_rows if isinstance(row, dict))
+            if len(rows) > 100000:
+                raise PlaybackReportingError('Playback Reporting returned too many events for one refresh.')
+        return rows
 
 
 def _as_int(value: Any) -> int:

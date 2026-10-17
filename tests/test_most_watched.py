@@ -112,20 +112,19 @@ class PlaybackReportingClientTests(unittest.TestCase):
         emby = FakeEmby()
         emby.session = FakeSession([
             FakeResponse(payload=[
-                {'item_id': 123, 'item_type': 'Movie', 'user_id': 'visible', 'duration': '5400'},
-                {'item_id': 124, 'item_type': 'Movie', 'user_id': 'ignored', 'duration': '3600'},
-            ]),
-            FakeResponse(payload=[
                 {'id': 'ignored', 'in_list': True},
                 {'id': 'visible', 'in_list': False},
+            ]),
+            FakeResponse(payload=[
+                {'item_id': 123, 'item_type': 'Movie', 'user_id': 'visible', 'duration': '5400'},
             ]),
         ])
         rows = PlaybackReportingClient(emby).get_playback_events(14)
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0]['item_id'], 123)
-        self.assertEqual(emby.session.calls[0][0], 'http://emby.invalid/user_usage_stats/UserPlaylist')
-        self.assertEqual(emby.session.calls[0][1]['params'], {
-            'user_id': '', 'aggregate_data': 'false', 'days': 14,
+        self.assertEqual(emby.session.calls[1][0], 'http://emby.invalid/user_usage_stats/UserPlaylist')
+        self.assertEqual(emby.session.calls[1][1]['params'], {
+            'user_id': 'visible', 'aggregate_data': 'false', 'days': 14,
         })
 
     def test_missing_plugin_is_reported_without_failing_the_page(self):
@@ -179,8 +178,16 @@ class PlaybackReportingClientTests(unittest.TestCase):
         ]
         emby.session = FakeSession([
             FakeResponse(payload=['Movie', 'Episode']),
-            FakeResponse(payload=playback_events),
-            FakeResponse(payload=[]),
+            FakeResponse(payload=[
+                {'id': 'u1', 'in_list': False},
+                {'id': 'u2', 'in_list': False},
+            ]),
+            FakeResponse(payload=[
+                event for event in playback_events if event['user_id'] == 'u1'
+            ]),
+            FakeResponse(payload=[
+                event for event in playback_events if event['user_id'] == 'u2'
+            ]),
         ])
         exporter = RecordingExporter()
         config = {
@@ -201,8 +208,8 @@ class PlaybackReportingClientTests(unittest.TestCase):
             state = sync_most_watched(emby, config, state_dir)
             saved = json.loads((Path(state_dir) / 'most_watched_results.json').read_text())
 
-        self.assertEqual(emby.session.calls[1][1]['params'], {
-            'user_id': '', 'aggregate_data': 'false', 'days': 21,
+        self.assertEqual(emby.session.calls[2][1]['params'], {
+            'user_id': 'u1', 'aggregate_data': 'false', 'days': 21,
         })
         calls = {call[0]: call for call in exporter.calls}
         self.assertEqual(calls['movies'][1][0]['name'], 'The Killers')
