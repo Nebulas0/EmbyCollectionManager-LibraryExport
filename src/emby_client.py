@@ -320,6 +320,11 @@ class EmbyClient(MediaServerClient):
             if not isinstance(payload, dict) or payload.get('Type') != 'BoxSet' or payload.get('Path'):
                 logger.warning("Refusing to update Sort Name for non-BoxSet item %s", collection_id)
                 return False
+            display_preferences_id = payload.get('DisplayPreferencesId')
+            if display_preferences_id:
+                cache = getattr(self, '_collection_display_preferences_ids', {})
+                cache[str(collection_id)] = str(display_preferences_id)
+                self._collection_display_preferences_ids = cache
             desired_name = collection_name or payload.get('Name')
             if payload.get('SortName') == sort_name and payload.get('Name') == desired_name:
                 return True
@@ -349,6 +354,25 @@ class EmbyClient(MediaServerClient):
         sort_by: str = 'ProductionYear',
         sort_order: str = 'Descending',
     ) -> bool:
+        if hasattr(self, '_temp_collections') and collection_id in self._temp_collections:
+            return True
+        cache = getattr(self, '_collection_display_preferences_ids', {})
+        display_preferences_id = cache.get(str(collection_id))
+        if not display_preferences_id:
+            item = self._make_api_request(
+                'GET',
+                f'/Users/{self.user_id}/Items/{collection_id}',
+            )
+            if not isinstance(item, dict) or item.get('Type') != 'BoxSet':
+                logger.warning("Could not resolve DisplayPreferencesId for collection %s", collection_id)
+                return False
+            display_preferences_id = item.get('DisplayPreferencesId')
+            if not display_preferences_id:
+                logger.warning("Emby returned no DisplayPreferencesId for collection %s", collection_id)
+                return False
+            cache[str(collection_id)] = str(display_preferences_id)
+            self._collection_display_preferences_ids = cache
+
         list_sorted = self._update_display_preferences(
             'BoxSet',
             client,
@@ -356,7 +380,7 @@ class EmbyClient(MediaServerClient):
             'Ascending',
         )
         items_sorted = self._update_display_preferences(
-            str(collection_id),
+            str(display_preferences_id),
             client,
             sort_by,
             sort_order,

@@ -129,6 +129,11 @@ class EmbyLibraryApiTests(unittest.TestCase):
         self.assertEqual(self.client.session.post.call_args.kwargs['timeout'], 20)
 
     def test_collection_item_sort_is_saved_per_user_client_and_preserves_custom_prefs(self):
+        self.client._make_api_request = Mock(return_value={
+            'Id': 'box-id',
+            'Type': 'BoxSet',
+            'DisplayPreferencesId': 'display-pref-id',
+        })
         self.client.session.get = Mock(side_effect=[
             Mock(status_code=200, json=Mock(return_value={
                 'Id': 'BoxSet',
@@ -137,7 +142,7 @@ class EmbyLibraryApiTests(unittest.TestCase):
                 'CustomPrefs': {},
             })),
             Mock(status_code=200, json=Mock(return_value={
-                'Id': 'box-id',
+                'Id': 'display-pref-id',
                 'Client': 'Emby Web',
                 'SortBy': 'SortName',
                 'SortOrder': 'Ascending',
@@ -148,6 +153,10 @@ class EmbyLibraryApiTests(unittest.TestCase):
 
         self.assertTrue(self.client.update_collection_item_sort('box-id'))
 
+        self.client._make_api_request.assert_called_once_with(
+            'GET',
+            '/Users/user/Items/box-id',
+        )
         self.assertEqual(
             self.client.session.get.call_args_list,
             [
@@ -157,7 +166,7 @@ class EmbyLibraryApiTests(unittest.TestCase):
                     timeout=15,
                 ),
                 call(
-                    'http://emby.invalid/DisplayPreferences/box-id',
+                    'http://emby.invalid/DisplayPreferences/display-pref-id',
                     params={'UserId': 'user', 'Client': 'Emby Web'},
                     timeout=15,
                 ),
@@ -179,10 +188,10 @@ class EmbyLibraryApiTests(unittest.TestCase):
                     timeout=20,
                 ),
                 call(
-                    'http://emby.invalid/DisplayPreferences/box-id',
+                    'http://emby.invalid/DisplayPreferences/display-pref-id',
                     params={'UserId': 'user'},
                     json={
-                        'Id': 'box-id',
+                        'Id': 'display-pref-id',
                         'Client': 'Emby Web',
                         'SortBy': 'ProductionYear',
                         'SortOrder': 'Descending',
