@@ -106,14 +106,16 @@ The Most Watched tab has its own automatic-library checkbox. Until you save that
 
 The optional `plugins/EmbyCollectionManagerStrmBridge` project is a lightweight Emby-side helper for `.strm` exports. It watches only Manager-owned Most Watched `.strm` items (symlink-only exports are ignored), associates the generated rank images and Sort Names, copies source episode runtime/stream metadata, and queues Emby's remote-content probe for movie `.strm` files. It does not modify source media.
 
-The helper uses Emby in-process plugin APIs because the public REST refresh endpoint does not expose the remote-content-probe option. Build it against the `system` assemblies from the exact Emby server you intend to use:
+The helper uses Emby in-process plugin APIs because the public REST refresh endpoint does not expose the remote-content-probe option. A prebuilt DLL is included at `plugins/EmbyCollectionManagerStrmBridge/dist/EmbyCollectionManagerStrmBridge.dll`. It was built against Emby 4.10.1.0 reference assemblies and its entry point loaded successfully on the accessible Emby 4.10.1.0 server. End-to-end STRM playback has not yet been tested because there are currently no generated Most Watched STRM items on that server.
+
+To rebuild against another Emby version, use that server's `system` assemblies:
 
 ```bash
 dotnet build plugins/EmbyCollectionManagerStrmBridge/EmbyCollectionManagerStrmBridge.csproj \
   -c Release -p:EmbyServerPath=/path/to/Emby/system
 ```
 
-Copy the resulting `bin/Release/netstandard2.0/EmbyCollectionManagerStrmBridge.dll` into Emby's plugin directory and restart Emby to load it. The checked-in source has been compiled against the available Emby 4.9.5 reference assemblies; it has not yet been installed or runtime-verified against Emby 4.10.1.0. Do not install it on a production server until it has been built and validated against that server's matching assemblies.
+Copy the resulting `bin/Release/netstandard2.0/EmbyCollectionManagerStrmBridge.dll` into Emby's plugin directory and restart Emby to load it. The plugin only processes STRM-mode copies and leaves symlink-only exports alone.
 
 ## Configuration and privacy
 
