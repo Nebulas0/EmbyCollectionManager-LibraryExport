@@ -30,6 +30,15 @@ from src.library_export import (
 
 logger = logging.getLogger("WebUI")
 
+
+class _SuccessfulLogPollFilter(logging.Filter):
+    def filter(self, record):
+        if record.name != 'werkzeug':
+            return True
+        message = record.getMessage()
+        return not ('"GET /api/logs' in message and '" 200 ' in message)
+
+
 # Provider hooks set by main.py
 _log_provider = None
 _sync_function = None
@@ -1357,6 +1366,9 @@ def notifications():
 
 def start_webui(host='0.0.0.0', port=8282):
     logging.basicConfig(level=logging.INFO)
+    werkzeug_logger = logging.getLogger('werkzeug')
+    if not any(isinstance(log_filter, _SuccessfulLogPollFilter) for log_filter in werkzeug_logger.filters):
+        werkzeug_logger.addFilter(_SuccessfulLogPollFilter())
     print(f"Starting Web UI on http://{host}:{port}")
     app.run(host=host, port=port, debug=False, use_reloader=False)
 

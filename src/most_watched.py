@@ -3,6 +3,7 @@ import json
 import logging
 import os
 import re
+import stat
 import tempfile
 import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
@@ -675,9 +676,13 @@ class MostWatchedLibraryExporter:
                 destination.unlink()
                 changed = True
             if destination.is_file() and _sha256_file(destination) == desired_hashes[relative]:
+                if stat.S_IMODE(destination.stat().st_mode) != 0o644:
+                    os.chmod(destination, 0o644)
+                    changed = True
                 continue
             with tempfile.NamedTemporaryFile(dir=destination.parent, prefix='.mw-', delete=False) as staged:
                 staged.write(content)
+                os.fchmod(staged.fileno(), 0o644)
                 staged_path = Path(staged.name)
             os.replace(staged_path, destination)
             changed = True

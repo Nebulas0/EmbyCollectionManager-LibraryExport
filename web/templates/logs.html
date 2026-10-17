@@ -32,7 +32,7 @@ async function refreshLogs(){
 }
 function toggleAutoRefresh(){
     if(document.getElementById('auto-refresh').checked){
-        autoRefresh=setInterval(refreshLogs,2000);
+        autoRefresh=setInterval(refreshLogs,10000);
     }else{
         clearInterval(autoRefresh);autoRefresh=null;
     }

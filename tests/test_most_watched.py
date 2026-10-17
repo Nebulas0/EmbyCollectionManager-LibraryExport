@@ -1,5 +1,6 @@
 import importlib.util
 import json
+import stat
 import tempfile
 import unittest
 from pathlib import Path
@@ -451,12 +452,50 @@ class MostWatchedLibraryExporterTests(unittest.TestCase):
         self.assertTrue((pointer.parent / f'{pointer.stem}.jpg').is_file())
         self.assertTrue((pointer.parent / f'{pointer.stem}-thumb.jpg').is_file())
         self.assertIn('<sorttitle>01 - Example Movie</sorttitle>', (pointer.parent / f'{pointer.stem}.nfo').read_text())
+        for generated_file in (
+            pointer,
+            pointer.parent / f'{pointer.stem}.nfo',
+            pointer.parent / f'{pointer.stem}.jpg',
+            pointer.parent / f'{pointer.stem}-thumb.jpg',
+        ):
+            self.assertEqual(stat.S_IMODE(generated_file.stat().st_mode), 0o644)
         self.assertEqual(list(output.rglob('*.mp4')), [])
         self.assertEqual(source_poster.read_bytes(), original_poster_bytes)
         self.assertEqual(movie_path.read_bytes(), b'original-mp4')
 
         exporter.sync('movies', [], create_emby_library=False, output_mode='strm')
         self.assertFalse(pointer.exists())
+        self.assertTrue(movie_path.exists())
+
+    def test_same_content_generated_file_permissions_are_repaired(self):
+        emby = FakeEmby()
+        exporter = self.make_exporter(emby)
+        movie_dir = self.media_root / 'movies' / 'Permission Test (2022)'
+        movie_dir.mkdir(parents=True)
+        movie_path = movie_dir / 'Permission Test.mkv'
+        movie_path.write_bytes(b'original-media')
+        item = {
+            'Id': 'permission-movie',
+            'Type': 'Movie',
+            'Name': 'Permission Test',
+            'ProductionYear': 2022,
+            'Path': str(movie_path),
+        }
+        ranked = [{'item': item, 'name': item['Name'], 'plays': 1, 'watch_seconds': 60}]
+
+        with patch.object(exporter, '_ranked_poster', return_value=b'generated-poster'):
+            first = exporter.sync(
+                'movies', ranked, create_emby_library=False, output_mode='strm', image_variants=['poster'],
+            )
+            poster = next(Path(first['library_path']).rglob('*.jpg'))
+            poster.chmod(0o600)
+            self.assertEqual(stat.S_IMODE(poster.stat().st_mode), 0o600)
+
+            exporter.sync(
+                'movies', ranked, create_emby_library=False, output_mode='strm', image_variants=['poster'],
+            )
+
+        self.assertEqual(stat.S_IMODE(poster.stat().st_mode), 0o644)
         self.assertTrue(movie_path.exists())
 
     def test_switching_movie_output_modes_prunes_only_managed_pointer_or_link(self):
