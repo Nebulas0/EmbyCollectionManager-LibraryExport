@@ -75,6 +75,20 @@
                 <label><input type="checkbox" id="detail-create-library"> Export this collection as a symlink library</label>
                 <small style="color:var(--text-dim)">Updated after the collection sync. Automatic Emby library creation is controlled in Settings.</small>
             </div>
+            <div class="form-group" style="border-top:1px solid var(--border);padding-top:12px">
+                <label><input type="checkbox" id="detail-seasonal-enabled" onchange="toggleSeasonalFields()"> Seasonal collection (annual schedule)</label>
+                <div class="form-row" style="margin-top:10px">
+                    <div class="form-group">
+                        <label>Active from (MM-DD)</label>
+                        <input type="text" id="detail-season-start" placeholder="10-01" pattern="\d{2}-\d{2}">
+                    </div>
+                    <div class="form-group">
+                        <label>Active through (MM-DD, inclusive)</label>
+                        <input type="text" id="detail-season-end" placeholder="11-01" pattern="\d{2}-\d{2}">
+                    </div>
+                </div>
+                <small style="color:var(--text-dim)">Repeats every year; windows may cross New Year (for example 12-01 to 01-02). Keep the recipe enabled. Outside this window, the next sync removes the matching Emby collection and clears only manager-owned symlink exports. It never deletes the movies or Emby library entries. Holiday recipes have suggested dates you can edit.</small>
+            </div>
             <div class="form-group">
                 <label>Extra MDBList URLs (one per line - merged into this collection)</label>
                 <textarea id="detail-mdblist-urls" rows="3" style="font-family:monospace;font-size:0.85rem" placeholder="https://mdblist.com/lists/user/list-name"></textarea>
@@ -166,6 +180,12 @@ function getCheckedLibs(containerId) {
     return Array.from(document.querySelectorAll(`#${containerId} input[type=checkbox]:checked`)).map(cb => cb.value);
 }
 
+function toggleSeasonalFields() {
+    const enabled = document.getElementById('detail-seasonal-enabled').checked;
+    document.getElementById('detail-season-start').disabled = !enabled;
+    document.getElementById('detail-season-end').disabled = !enabled;
+}
+
 // Search/filter
 function filterRecipes() {
     const q = document.getElementById('recipe-search').value.toLowerCase().trim();
@@ -207,11 +227,17 @@ async function showDetail(name) {
         if (data.tmdb_discover_params) html += '<div class="form-group"><label>TMDb Discover Parameters</label><pre style="background:var(--bg);padding:10px;border-radius:4px;font-size:0.85rem;overflow-x:auto">'+JSON.stringify(data.tmdb_discover_params,null,2)+'</pre></div>';
         if (data.trakt_list_params) html += '<div class="form-group"><label>Trakt List Parameters</label><pre style="background:var(--bg);padding:10px;border-radius:4px;font-size:0.85rem;overflow-x:auto">'+JSON.stringify(data.trakt_list_params,null,2)+'</pre></div>';
         const ov = data.override || {};
+        const seasonal = ov.seasonal || {};
+        const seasonalDefaults = data.seasonal_defaults || {};
         if (Object.keys(ov).length > 0) html += '<div class="alert alert-info" style="margin-top:10px">This recipe has overrides applied.</div>';
         document.getElementById('detail-body').innerHTML = html;
         document.getElementById('detail-edit').style.display = 'block';
         libCheckboxes('detail-libraries', ov.library_ids || []);
         document.getElementById('detail-create-library').checked = !!ov.create_library;
+        document.getElementById('detail-seasonal-enabled').checked = !!seasonal.enabled;
+        document.getElementById('detail-season-start').value = seasonal.start || seasonalDefaults.start || '';
+        document.getElementById('detail-season-end').value = seasonal.end || seasonalDefaults.end || '';
+        toggleSeasonalFields();
         document.getElementById('detail-custom-name').value = ov.custom_name || '';
         document.getElementById('detail-item-limit').value = ov.item_limit || '';
         document.getElementById('detail-mdblist-urls').value = (ov.extra_mdblist_urls || []).join('\n');
@@ -236,6 +262,11 @@ async function saveOverride() {
         custom_poster_url: document.getElementById('detail-poster-url').value.trim() || null,
         custom_backdrop_url: document.getElementById('detail-backdrop-url').value.trim() || null,
         create_library: document.getElementById('detail-create-library').checked,
+        seasonal: {
+            enabled: document.getElementById('detail-seasonal-enabled').checked,
+            start: document.getElementById('detail-season-start').value.trim(),
+            end: document.getElementById('detail-season-end').value.trim(),
+        },
     };
     try {
         const res = await fetch('/api/recipe_override', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({recipe_name:currentRecipeName,override})});

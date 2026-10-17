@@ -1,8 +1,7 @@
 import unittest
 from unittest.mock import patch
 
-from src.app_logic import _sync_collection
-from src.app_logic import _sync_library_export
+from src.app_logic import _expire_seasonal_collection, _sync_collection, _sync_library_export
 
 
 class EmptyCollectionClient:
@@ -20,6 +19,20 @@ class EmptyCollectionClient:
         return True
 
 
+class OrderedCollectionClient(EmptyCollectionClient):
+    def __init__(self):
+        super().__init__()
+        self.sort_name = None
+        self.get_library_item_ids_by_tmdb_ids = lambda tmdb_ids, library_ids: ['old', 'new']
+
+    def sort_item_ids_by_year(self, item_ids):
+        return ['new', 'old']
+
+    def update_collection_sort_name(self, collection_id, sort_name, collection_name):
+        self.sort_name = (collection_id, sort_name, collection_name)
+        return True
+
+
 class SyncCollectionTests(unittest.TestCase):
     def test_empty_results_preserve_default_and_clear_only_when_opted_in(self):
         default_client = EmptyCollectionClient()
@@ -33,6 +46,17 @@ class SyncCollectionTests(unittest.TestCase):
             'collection-id',
         )
         self.assertEqual(opted_in_client.updated, [('collection-id', [])])
+
+    def test_members_are_sorted_by_year_and_collection_sort_name_is_set(self):
+        client = OrderedCollectionClient()
+
+        self.assertEqual(
+            _sync_collection(client, 'Christmas', [1], sort_name='0000000001 Christmas'),
+            'collection-id',
+        )
+
+        self.assertEqual(client.updated, [('collection-id', ['new', 'old'])])
+        self.assertEqual(client.sort_name, ('collection-id', '0000000001 Christmas', 'Christmas'))
 
     def test_settings_can_skip_automatic_emby_library_creation(self):
         emby = EmptyCollectionClient()
@@ -51,6 +75,22 @@ class SyncCollectionTests(unittest.TestCase):
             'Horror',
             create_emby_library=False,
         )
+
+    def test_expired_seasonal_collection_is_removed_and_managed_links_are_cleared(self):
+        class SeasonalEmby:
+            def get_collection_id(self, name):
+                return 'box-id'
+
+            def delete_collection(self, collection_id):
+                self.deleted = collection_id
+                return True
+
+        emby = SeasonalEmby()
+        with patch('src.app_logic._sync_library_export') as sync_export:
+            self.assertTrue(_expire_seasonal_collection(emby, 'Halloween', {}))
+
+        self.assertEqual(emby.deleted, 'box-id')
+        sync_export.assert_called_once_with(emby, None, 'Halloween', {}, False)
 
 
 if __name__ == '__main__':

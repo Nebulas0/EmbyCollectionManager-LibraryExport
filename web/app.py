@@ -651,6 +651,7 @@ def delete_mdblist():
 def recipe_detail(recipe_name):
     """Get full details of a recipe including override config."""
     from src.collection_recipes import RECIPES, CATEGORY_CONFIG
+    from src.seasonal import seasonal_defaults_for_recipe
     recipe = None
     for r in RECIPES:
         if r.get('name') == recipe_name:
@@ -679,6 +680,7 @@ def recipe_detail(recipe_name):
         'tmdb_collection_id': recipe.get('tmdb_collection_id'),
         'trakt_list_params': recipe.get('trakt_list_params'),
         'sort_by': recipe.get('sort_by'),
+        'seasonal_defaults': seasonal_defaults_for_recipe(recipe_name),
         'override': override,
     }
     return jsonify(detail)
@@ -692,6 +694,16 @@ def save_recipe_override():
     override = data.get('override', {})
     if not recipe_name:
         return jsonify({'error': 'No recipe_name'}), 400
+    if not isinstance(override, dict):
+        return jsonify({'error': 'Override must be an object'}), 400
+    from src.seasonal import normalize_seasonal_rule
+    try:
+        override['seasonal'] = normalize_seasonal_rule(
+            recipe_name,
+            override.get('seasonal'),
+        )
+    except ValueError as exc:
+        return jsonify({'error': str(exc)}), 400
     from src.recipe_override import RecipeOverrideManager
     mgr = RecipeOverrideManager(BASE_DIR)
     mgr.set_override(recipe_name, override)

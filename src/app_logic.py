@@ -12,6 +12,7 @@ from src.mdblist_processor import MDBListProcessor
 from src.emby_client import EmbyClient
 from src.library_export import CollectionLibraryExporter
 from src.collection_recipes import RECIPES  # Assumes recipes are defined here
+from src.seasonal import is_in_season, normalize_seasonal_rule, seasonal_sort_name
 import yaml
 import os
 from typing import List, Dict, Any, Optional
@@ -362,6 +363,30 @@ def main():
             if not collection_name:
                 logger.warning(f"Skipping recipe without a name: {recipe}")
                 continue
+
+            dup_config = recipe.get('_duplicate_config', {})
+            try:
+                seasonal_rule = normalize_seasonal_rule(
+                    collection_name,
+                    recipe_override_cfg.get('seasonal', dup_config.get('seasonal')),
+                )
+            except ValueError as exc:
+                logger.error("Invalid seasonal schedule for '%s': %s", collection_name, exc)
+                continue
+            if seasonal_rule['enabled'] and not is_in_season(seasonal_rule):
+                logger.info(
+                    "Seasonal collection '%s' is outside %s to %s; removing it from Emby",
+                    collection_name,
+                    seasonal_rule['start'],
+                    seasonal_rule['end'],
+                )
+                _expire_seasonal_collection(emby, collection_name, config)
+                continue
+            sort_name = (
+                seasonal_sort_name(collection_name)
+                if seasonal_rule['enabled']
+                else collection_name
+            )
                 
             logger.info(f"Processing collection: {collection_name}")
             tmdb_ids = []
@@ -452,7 +477,6 @@ def main():
             backdrop_url = None
             
             # Apply recipe overrides (library_ids, extra items, custom artwork)
-            dup_config = recipe.get('_duplicate_config', {})
             is_duplicate = recipe.get('_is_duplicate', False)
             override = recipe_overrides.get(collection_name, {})
             
@@ -511,6 +535,7 @@ def main():
                     tmdb_ids,
                     recipe_library_ids,
                     clear_when_empty=create_library,
+                    sort_name=sort_name,
                 )
 
                 if collection_id: # Proceed only if collection sync was successful
@@ -678,7 +703,14 @@ def get_random_movie_artwork(tmdb_client, tmdb_ids, collection_name):
         logger.error(f"Error fetching artwork for movie ID {selected_movie_id}: {e}")
         return None, None
 
-def _sync_collection(server_client, collection_name, tmdb_ids, library_ids=None, clear_when_empty=False):
+def _sync_collection(
+    server_client,
+    collection_name,
+    tmdb_ids,
+    library_ids=None,
+    clear_when_empty=False,
+    sort_name=None,
+):
     """
     Sync a collection to a media server. Creates the collection if it doesn't exist,
     and adds the matching library items to it.
@@ -693,6 +725,7 @@ def _sync_collection(server_client, collection_name, tmdb_ids, library_ids=None,
         The collection ID if successful, None otherwise
     """
     logger.info(f"  Syncing collection '{collection_name}' on {server_client.__class__.__name__}")
+    set_sort_name = getattr(server_client, 'update_collection_sort_name', None)
     try:
         collection_id = server_client.get_or_create_collection(collection_name)
         if not collection_id:
@@ -704,22 +737,44 @@ def _sync_collection(server_client, collection_name, tmdb_ids, library_ids=None,
             logger.warning(f"    No owned items found for collection '{collection_name}'")
             if clear_when_empty:
                 server_client.update_collection_items(collection_id, [])
+            if callable(set_sort_name):
+                set_sort_name(collection_id, sort_name or collection_name, collection_name)
             return collection_id  # Still return the ID for artwork updates
         
         # Ensure no duplicate item IDs
         unique_item_ids = list(dict.fromkeys(owned_item_ids))
         if len(unique_item_ids) < len(owned_item_ids):
             logger.info(f"    Removed {len(owned_item_ids) - len(unique_item_ids)} duplicate items from collection '{collection_name}'")
-            
+        sort_by_year = getattr(server_client, 'sort_item_ids_by_year', None)
+        if callable(sort_by_year):
+            unique_item_ids = sort_by_year(unique_item_ids)
+
         success = server_client.update_collection_items(collection_id, unique_item_ids)
         if success:
             logger.info(f"    Updated collection '{collection_name}' with {len(unique_item_ids)} unique items")
+            if callable(set_sort_name):
+                set_sort_name(collection_id, sort_name or collection_name, collection_name)
         else:
             logger.error(f"    Failed to update collection '{collection_name}'.")            
         return collection_id
     except Exception as e:
         logger.error(f"    Exception during syncing collection '{collection_name}': {e}")
         return None
+
+
+def _expire_seasonal_collection(emby, collection_name, config):
+    try:
+        collection_id = emby.get_collection_id(collection_name)
+    except Exception as exc:
+        logger.warning("Could not verify seasonal collection '%s': %s", collection_name, exc)
+        return False
+
+    if collection_id and not emby.delete_collection(collection_id):
+        logger.warning("Seasonal collection '%s' could not be safely removed", collection_name)
+        return False
+
+    _sync_library_export(emby, None, collection_name, config, False)
+    return True
 
 
 def _sync_library_export(emby, collection_id, collection_name, config, enabled):

@@ -78,6 +78,14 @@ For a main server using `/mnt/unionfs`, set both `LIBRARY_EXPORT_MEDIA_MOUNTS` a
 
 When items disappear from a collection, the next sync removes only the corresponding manager-owned symlinks. Turning off a collection’s export also clears its managed links on the next sync; the Emby library entry itself is left in place.
 
+## Seasonal collections and ordering
+
+Edit a recipe in the Collections tab and enable **Seasonal collection** to give it a recurring annual window using `MM-DD` dates. Suggested windows are Halloween `10-01`–`11-01`, Christmas `12-01`–`01-02`, Valentine's Day `02-01`–`02-15`, and Thanksgiving `11-01`–`12-01`; edit these or set a custom window on any recipe. Windows can cross New Year. Keep the recipe enabled for the scheduler to enforce the window.
+
+Outside an enabled season, the next manager sync removes the matching Emby BoxSet collection and clears only its manifest-owned symlink exports. The manager verifies that the Emby item is a pathless BoxSet before deleting it; it does not delete movie files, other media, or any Emby library entry. Seasonal scheduling is off by default.
+
+For manager-synced collections, item IDs are submitted to Emby in descending release-year order, using premiere date to break ties. The manager sets non-seasonal collections' Sort Name to their name. Active seasonal collections get a hidden, timestamp-based Sort Name so the most recently updated seasonal collection sorts first. In Emby, use **Sort Name ascending** for that outer collection order. A client can apply its own item sort, so select release date/year descending there if it overrides the submitted order.
+
 ## Most Watched libraries
 
 The Most Watched tab reads per-item playback events from Playback Reporting's `UserPlaylist` API using the configured Emby administrator token. It filters ignored users, resolves the event item IDs through Emby, and counts only items whose paths are inside the selected source libraries. Movie plays are grouped by movie identity; episode plays are grouped by Emby `SeriesId`.

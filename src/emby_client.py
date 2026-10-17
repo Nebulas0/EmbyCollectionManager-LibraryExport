@@ -1,6 +1,7 @@
 from typing import List, Optional, Dict, Any, Tuple
 import uuid
 import logging
+import re
 import requests
 import os
 import sys
@@ -263,7 +264,7 @@ class EmbyClient(MediaServerClient):
                 endpoint,
                 params={
                     'Ids': ','.join(ids[offset:offset + 100]),
-                    'Fields': 'Path,ProviderIds,ProductionYear,Overview,Genres,Studios,PremiereDate,OfficialRating,CommunityRating,RunTimeTicks',
+                    'Fields': 'Name,Type,Path,ProviderIds,ProductionYear,Overview,Genres,Studios,PremiereDate,OfficialRating,CommunityRating,RunTimeTicks',
                     'Limit': 100,
                 },
             )
@@ -271,6 +272,97 @@ class EmbyClient(MediaServerClient):
                 return None
             items.extend(data['Items'])
         return items
+
+    def sort_item_ids_by_year(self, item_ids: List[str]) -> List[str]:
+        ids = list(dict.fromkeys(str(item_id) for item_id in item_ids if item_id))
+        if len(ids) < 2:
+            return ids
+        items = self.get_items_by_ids(ids)
+        if items is None:
+            logger.warning('Could not read item years; leaving collection membership order unchanged')
+            return ids
+        by_id = {str(item.get('Id')): item for item in items if item.get('Id')}
+
+        def sort_key(item_id):
+            item = by_id.get(item_id, {})
+            premiere = str(item.get('PremiereDate') or '')
+            match = re.match(r'(\d{4})-(\d{2})-(\d{2})', premiere)
+            date_key = int(''.join(match.groups())) if match else 0
+            try:
+                year = int(item.get('ProductionYear') or (match.group(1) if match else 0))
+            except (TypeError, ValueError):
+                year = int(match.group(1)) if match else 0
+            return (
+                0 if year else 1,
+                -year,
+                -date_key,
+                str(item.get('Name') or '').casefold(),
+                item_id,
+            )
+
+        return sorted(ids, key=sort_key)
+
+    def update_collection_sort_name(
+        self,
+        collection_id: str,
+        sort_name: str,
+        collection_name: Optional[str] = None,
+    ) -> bool:
+        if not collection_id or not sort_name:
+            return False
+        if hasattr(self, '_temp_collections') and collection_id in self._temp_collections:
+            return True
+        try:
+            payload = {'Id': str(collection_id), 'SortName': sort_name}
+            if collection_name:
+                payload['Name'] = collection_name
+            response = self.session.post(
+                f'{self.server_url}/Items/{collection_id}',
+                json=payload,
+                timeout=20,
+            )
+            if response.status_code in (200, 204):
+                return True
+            logger.warning(
+                "Emby could not update Sort Name for collection %s (HTTP %s)",
+                collection_id,
+                response.status_code,
+            )
+        except requests.RequestException as exc:
+            logger.warning("Could not update Sort Name for collection %s: %s", collection_id, exc)
+        return False
+
+    def delete_collection(self, collection_id: str) -> bool:
+        if not collection_id:
+            return False
+        items = self.get_items_by_ids([collection_id])
+        if items is None:
+            logger.warning('Could not verify collection %s before deletion', collection_id)
+            return False
+        if not items:
+            return True
+        item = items[0]
+        if item.get('Type') != 'BoxSet' or item.get('Path'):
+            logger.error(
+                "Refusing seasonal deletion of item %s: it is not a pathless Emby BoxSet",
+                collection_id,
+            )
+            return False
+        try:
+            response = self.session.delete(
+                f'{self.server_url}/Items/{collection_id}',
+                timeout=20,
+            )
+            if response.status_code in (200, 204):
+                return True
+            logger.warning(
+                "Emby could not remove seasonal collection %s (HTTP %s)",
+                collection_id,
+                response.status_code,
+            )
+        except requests.RequestException as exc:
+            logger.warning("Could not remove seasonal collection %s: %s", collection_id, exc)
+        return False
 
     def get_series_episodes(self, series_id: str) -> Optional[List[Dict[str, Any]]]:
         endpoint = f"/Users/{self.user_id}/Items"

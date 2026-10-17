@@ -70,6 +70,63 @@ class EmbyLibraryApiTests(unittest.TestCase):
         self.assertEqual(items[0]['Id'], '2328102')
         self.assertEqual(self.client._make_api_request.call_args.kwargs['params']['Ids'], '2328102')
 
+    def test_item_ids_sort_by_release_year_newest_first(self):
+        self.client._make_api_request = Mock(return_value={
+            'Items': [
+                {'Id': 'old', 'Name': 'Old', 'ProductionYear': 1990},
+                {'Id': 'new', 'Name': 'New', 'ProductionYear': 2024},
+                {'Id': 'unknown', 'Name': 'Unknown'},
+            ],
+        })
+
+        self.assertEqual(
+            self.client.sort_item_ids_by_year(['old', 'unknown', 'new']),
+            ['new', 'old', 'unknown'],
+        )
+
+    def test_collection_sort_name_updates_only_the_sort_field(self):
+        self.client.session.post = Mock(return_value=Mock(status_code=204))
+
+        self.assertTrue(
+            self.client.update_collection_sort_name(
+                'box-id',
+                '0000000001 Christmas',
+                'Christmas',
+            )
+        )
+
+        self.client.session.post.assert_called_once_with(
+            'http://emby.invalid/Items/box-id',
+            json={
+                'Id': 'box-id',
+                'Name': 'Christmas',
+                'SortName': '0000000001 Christmas',
+            },
+            timeout=20,
+        )
+
+    def test_seasonal_delete_refuses_non_boxsets_and_path_backed_items(self):
+        self.client.get_items_by_ids = Mock(return_value=[{
+            'Id': 'movie-id',
+            'Type': 'Movie',
+            'Path': '/mnt/unionfs/movies/movie.mkv',
+        }])
+        self.client.session.delete = Mock()
+        self.assertFalse(self.client.delete_collection('movie-id'))
+        self.client.session.delete.assert_not_called()
+
+        self.client.get_items_by_ids.return_value = [{
+            'Id': 'box-id',
+            'Type': 'BoxSet',
+            'Path': None,
+        }]
+        self.client.session.delete.return_value = Mock(status_code=204)
+        self.assertTrue(self.client.delete_collection('box-id'))
+        self.client.session.delete.assert_called_once_with(
+            'http://emby.invalid/Items/box-id',
+            timeout=20,
+        )
+
     def test_existing_library_at_the_same_path_is_reused(self):
         self.client._make_api_request = Mock(return_value=[{
             'Name': 'Horror-library',

@@ -1,3 +1,4 @@
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -15,6 +16,8 @@ class LibraryExportSettingsTests(unittest.TestCase):
         self.original_config_path = web_app.CONFIG_PATH
         self.original_state_path = web_app.STATE_PATH
         self.original_most_watched_state_path = web_app.MOST_WATCHED_STATE_PATH
+        self.original_base_dir = web_app.BASE_DIR
+        web_app.BASE_DIR = self.temp_dir.name
         web_app.CONFIG_PATH = str(config_dir / 'config.yaml')
         web_app.STATE_PATH = str(config_dir / 'webui_state.json')
         web_app.MOST_WATCHED_STATE_PATH = str(config_dir / 'most_watched_results.json')
@@ -25,6 +28,7 @@ class LibraryExportSettingsTests(unittest.TestCase):
         web_app.CONFIG_PATH = self.original_config_path
         web_app.STATE_PATH = self.original_state_path
         web_app.MOST_WATCHED_STATE_PATH = self.original_most_watched_state_path
+        web_app.BASE_DIR = self.original_base_dir
         self.temp_dir.cleanup()
 
     def test_auto_library_setting_is_saved_as_disabled(self):
@@ -96,6 +100,34 @@ class LibraryExportSettingsTests(unittest.TestCase):
         self.assertIn(b'Playback Reporting', response.data)
         self.assertIn(b'value="14"', response.data)
         self.assertIn(b'value="10"', response.data)
+
+    def test_seasonal_recipe_override_uses_holiday_preset_and_validates_dates(self):
+        page = self.client.get('/collections')
+        self.assertEqual(page.status_code, 200)
+        self.assertIn(b'id="detail-seasonal-enabled"', page.data)
+        self.assertIn(b'id="detail-season-start"', page.data)
+
+        detail = self.client.get('/api/recipe_detail/Christmas')
+        self.assertEqual(detail.status_code, 200)
+        self.assertEqual(detail.json['seasonal_defaults'], {'start': '12-01', 'end': '01-02'})
+
+        response = self.client.post('/api/recipe_override', json={
+            'recipe_name': 'Christmas',
+            'override': {
+                'seasonal': {'enabled': True, 'start': '', 'end': ''},
+            },
+        })
+        self.assertEqual(response.status_code, 200)
+        saved = json.loads((Path(self.temp_dir.name) / 'config' / 'recipe_overrides.json').read_text())
+        self.assertEqual(saved['overrides']['Christmas']['seasonal'], {
+            'enabled': True, 'start': '12-01', 'end': '01-02',
+        })
+
+        invalid = self.client.post('/api/recipe_override', json={
+            'recipe_name': 'Christmas',
+            'override': {'seasonal': {'enabled': True, 'start': '13-40', 'end': '01-02'}},
+        })
+        self.assertEqual(invalid.status_code, 400)
 
 
 if __name__ == '__main__':
