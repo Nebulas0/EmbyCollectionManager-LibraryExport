@@ -129,6 +129,37 @@ class ListEditorTests(unittest.TestCase):
         })
         self.assertEqual(response.status_code, 400)
 
+    def test_editor_save_endpoints_persist_content_and_all_list_settings(self):
+        filename = 'New Picks.txt'
+        content = '101\n102\n'
+        save_file = self.client.post('/mdblists/save', json={
+            'name': filename,
+            'content': content,
+        })
+        self.assertEqual(save_file.status_code, 200)
+        self.assertEqual((self.root / 'mdblists' / filename).read_text(), content)
+
+        save_settings = self.client.post('/api/list_config', json={
+            'type': 'mdblists',
+            'filename': filename,
+            'config': {
+                'collection_name': 'New Science Fiction',
+                'item_limit': 12,
+                'library_ids': ['movie-library'],
+                'create_library': True,
+                'poster_url': 'https://example.test/poster.jpg',
+                'backdrop_url': 'https://example.test/backdrop.jpg',
+                'seasonal': {'enabled': False, 'start': '', 'end': ''},
+            },
+        })
+        self.assertEqual(save_settings.status_code, 200)
+        saved = ListMetadataManager(self.temp_dir.name).get_list_config('mdblists', filename)
+        self.assertEqual(saved['item_limit'], 12)
+        self.assertEqual(saved['library_ids'], ['movie-library'])
+        self.assertTrue(saved['create_library'])
+        self.assertEqual(saved['poster_url'], 'https://example.test/poster.jpg')
+        self.assertEqual(saved['backdrop_url'], 'https://example.test/backdrop.jpg')
+
 
 if __name__ == '__main__':
     unittest.main()
