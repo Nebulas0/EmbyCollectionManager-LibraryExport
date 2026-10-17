@@ -77,6 +77,10 @@ class ListEditorTests(unittest.TestCase):
             self.assertIn(b'id="list-libraries"', response.data)
             self.assertIn(b'id="list-poster-url"', response.data)
             self.assertIn(b'id="create-library"', response.data)
+            self.assertIn(b'onclick="saveFile()"', response.data)
+            self.assertIn(b'onclick="closeModal()"', response.data)
+            self.assertIn(b'async function saveFile()', response.data)
+            self.assertIn(b'function closeModal()', response.data)
             self.assertNotIn(b'showLibSelect', response.data)
 
     def test_per_list_item_limit_overrides_global_limit_for_both_sources(self):
