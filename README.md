@@ -78,6 +78,10 @@ For a main server using `/mnt/unionfs`, set both `LIBRARY_EXPORT_MEDIA_MOUNTS` a
 
 When items disappear from a collection, the next sync removes only the corresponding manager-owned symlinks. Turning off a collection’s export also clears its managed links on the next sync; the Emby library entry itself is left in place.
 
+## Trakt and MDBList list editor
+
+The Trakt Lists and MDBLists tabs share a single edit dialog for list content, collection name, per-list item limit, source libraries, symlink export, seasonal window, and poster/backdrop URLs. The standalone Libraries button is removed; choose source libraries in Edit instead. These options are stored per list and applied on the next sync. A per-list item limit overrides the global limit; `0` means unlimited and a blank value uses the global setting.
+
 ## Seasonal collections and ordering
 
 Edit a recipe in the Collections tab and enable **Seasonal collection** to give it a recurring annual window using `MM-DD` dates. Suggested windows are Halloween `10-01`–`11-01`, Christmas `12-01`–`01-02`, Valentine's Day `02-01`–`02-15`, and Thanksgiving `11-01`–`12-01`; edit these or set a custom window on any recipe. Windows can cross New Year. Keep the recipe enabled for the scheduler to enforce the window.

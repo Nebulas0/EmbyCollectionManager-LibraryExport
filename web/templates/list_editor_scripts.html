@@ -1,0 +1,195 @@
+<script>
+const listEditorType = {{ list_type|tojson }};
+const listEditorLabel = {{ list_label|tojson }};
+let listEditorLibraries = [];
+let listEditorCurrentFile = null;
+
+async function loadListEditorLibraries() {
+    try {
+        const response = await fetch('/api/list_libraries');
+        listEditorLibraries = response.ok ? await response.json() : [];
+    } catch (error) {
+        listEditorLibraries = [];
+    }
+}
+
+function renderListEditorLibraries(selectedIds) {
+    const selected = new Set((selectedIds || []).map(String));
+    const container = document.getElementById('list-libraries');
+    if (!listEditorLibraries.length) {
+        container.innerHTML = '<p style="color:var(--text-dim)">No libraries found. Configure Emby in Settings first.</p>';
+        return;
+    }
+    container.innerHTML = listEditorLibraries.map(library => `
+        <div class="lib-item">
+            <div class="lib-info">
+                <div class="lib-name">${library.Name}</div>
+                <div class="lib-type">${library.CollectionType || 'mixed'} - ID: ${library.Id}</div>
+            </div>
+            <input type="checkbox" class="checkbox" value="${library.Id}" ${selected.has(String(library.Id)) ? 'checked' : ''}>
+        </div>
+    `).join('');
+}
+
+function checkedListEditorLibraries() {
+    return Array.from(
+        document.querySelectorAll('#list-libraries input[type=checkbox]:checked')
+    ).map(input => input.value);
+}
+
+function toggleListSeasonalFields() {
+    const enabled = document.getElementById('list-seasonal-enabled').checked;
+    document.getElementById('list-season-start').disabled = !enabled;
+    document.getElementById('list-season-end').disabled = !enabled;
+}
+
+function validListSeasonDate(value) {
+    const match = /^(\d{2})-(\d{2})$/.exec(value);
+    if (!match) return false;
+    const date = new Date(Date.UTC(2000, Number(match[1]) - 1, Number(match[2])));
+    return date.getUTCMonth() === Number(match[1]) - 1 && date.getUTCDate() === Number(match[2]);
+}
+
+function resetListEditorSettings() {
+    document.getElementById('list-collection-name').value = '';
+    document.getElementById('list-item-limit').value = '';
+    document.getElementById('create-library').checked = false;
+    document.getElementById('list-poster-url').value = '';
+    document.getElementById('list-backdrop-url').value = '';
+    document.getElementById('list-seasonal-enabled').checked = false;
+    document.getElementById('list-season-start').value = '';
+    document.getElementById('list-season-end').value = '';
+    renderListEditorLibraries([]);
+    toggleListSeasonalFields();
+}
+
+async function showNew(format) {
+    await loadListEditorLibraries();
+    listEditorCurrentFile = null;
+    const extension = format === 'yaml' ? '.yaml' : '.txt';
+    document.getElementById('modal-title').textContent = 'New ' + listEditorLabel + ' List';
+    document.getElementById('file-name').value = 'My Collection' + extension;
+    document.getElementById('file-name').disabled = false;
+    document.getElementById('file-content').value = format === 'yaml'
+        ? 'collection_name: My Collection\nitems:\n  - ' + (listEditorType === 'mdblists' ? 'https://mdblist.com/lists/user/list-name' : 'https://trakt.tv/users/username/lists/list-name') + '\n'
+        : '# One item per line: URL, TMDb ID, or movie title\n';
+    resetListEditorSettings();
+    document.getElementById('file-modal').classList.add('active');
+}
+
+async function editFile(filename) {
+    await loadListEditorLibraries();
+    const query = new URLSearchParams({type: listEditorType, filename});
+    try {
+        const response = await fetch('/api/list_editor?' + query.toString());
+        const data = await response.json();
+        if (!response.ok) {
+            alert(data.error || 'Could not load list settings');
+            return;
+        }
+        listEditorCurrentFile = filename;
+        const settings = data.config || {};
+        const seasonal = settings.seasonal || {};
+        document.getElementById('modal-title').textContent = 'Edit: ' + filename;
+        document.getElementById('file-name').value = filename;
+        document.getElementById('file-name').disabled = true;
+        document.getElementById('file-content').value = data.content || '';
+        document.getElementById('list-collection-name').value = settings.collection_name || '';
+        document.getElementById('list-item-limit').value = settings.item_limit ?? '';
+        document.getElementById('create-library').checked = !!settings.create_library;
+        document.getElementById('list-poster-url').value = settings.poster_url || '';
+        document.getElementById('list-backdrop-url').value = settings.backdrop_url || '';
+        document.getElementById('list-seasonal-enabled').checked = !!seasonal.enabled;
+        document.getElementById('list-season-start').value = seasonal.start || '';
+        document.getElementById('list-season-end').value = seasonal.end || '';
+        renderListEditorLibraries(settings.library_ids);
+        toggleListSeasonalFields();
+        document.getElementById('file-modal').classList.add('active');
+    } catch (error) {
+        alert('Could not load list settings: ' + error);
+    }
+}
+
+function closeModal() {
+    document.getElementById('file-modal').classList.remove('active');
+    listEditorCurrentFile = null;
+}
+
+async function saveFile() {
+    const filename = document.getElementById('file-name').value.trim();
+    const itemLimitText = document.getElementById('list-item-limit').value.trim();
+    if (!filename) {
+        alert('Enter a filename');
+        return;
+    }
+    if (itemLimitText && (!/^\d+$/.test(itemLimitText) || Number(itemLimitText) > 10000)) {
+        alert('Item limit must be a number between 0 and 10000');
+        return;
+    }
+    if (document.getElementById('list-seasonal-enabled').checked) {
+        const start = document.getElementById('list-season-start').value.trim();
+        const end = document.getElementById('list-season-end').value.trim();
+        if (!validListSeasonDate(start) || !validListSeasonDate(end)) {
+            alert('Season dates must be valid MM-DD dates.');
+            return;
+        }
+    }
+
+    const settings = {
+        collection_name: document.getElementById('list-collection-name').value.trim() || null,
+        item_limit: itemLimitText ? Number(itemLimitText) : null,
+        library_ids: checkedListEditorLibraries(),
+        create_library: document.getElementById('create-library').checked,
+        poster_url: document.getElementById('list-poster-url').value.trim() || null,
+        backdrop_url: document.getElementById('list-backdrop-url').value.trim() || null,
+        seasonal: {
+            enabled: document.getElementById('list-seasonal-enabled').checked,
+            start: document.getElementById('list-season-start').value.trim(),
+            end: document.getElementById('list-season-end').value.trim(),
+        },
+    };
+
+    try {
+        const fileResponse = await fetch('/' + listEditorType + '/save', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({name: filename, content: document.getElementById('file-content').value}),
+        });
+        const fileResult = await fileResponse.json();
+        if (!fileResponse.ok || !fileResult.success) {
+            alert(fileResult.error || 'Could not save list content');
+            return;
+        }
+
+        const configResponse = await fetch('/api/list_config', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({type: listEditorType, filename, config: settings}),
+        });
+        const configResult = await configResponse.json();
+        if (!configResponse.ok || !configResult.success) {
+            alert('List content saved, but settings were not: ' + (configResult.error || 'Unknown error'));
+            return;
+        }
+        location.reload();
+    } catch (error) {
+        alert('Could not save list: ' + error);
+    }
+}
+
+async function deleteFile(filename) {
+    if (!confirm('Delete ' + filename + '?')) return;
+    try {
+        const response = await fetch('/' + listEditorType + '/delete', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({name: filename}),
+        });
+        const data = await response.json();
+        if (response.ok && data.success) location.reload();
+        else alert(data.error || 'Delete failed');
+    } catch (error) {
+        alert('Delete failed: ' + error);
+    }
+}
+</script>

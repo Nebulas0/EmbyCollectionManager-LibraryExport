@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block title %}{{ list_label }} Lists - Emby Collection Manager{% endblock %}
+{% block content %}
+<h1 style="margin-bottom:20px">{{ list_label }} Lists</h1>
+<div class="card">
+    <p style="margin-bottom:15px;color:var(--text-dim)">
+        {{ list_label }} list files in <code>{{ directory }}/</code>. Edit list content, collection limits,
+        artwork, source libraries, and symlink export settings together.
+    </p>
+    <button class="btn btn-primary" onclick="showNew('txt')">+ New .txt List</button>
+    <button class="btn btn-primary" onclick="showNew('yaml')">+ New .yaml List</button>
+</div>
+
+{% if files %}
+<div class="card">
+    <h2>Existing Lists ({{ files|length }})</h2>
+    <ul class="file-list">
+        {% for file in files %}
+        <li class="file-item">
+            <div class="file-item-header">
+                <span class="file-item-name">{{ file.name }}</span>
+                <div>
+                    <button class="btn btn-secondary btn-sm" onclick='editFile({{ file.name|tojson }})'>Edit</button>
+                    <button class="btn btn-secondary btn-sm" onclick='deleteFile({{ file.name|tojson }})' style="color:var(--red)">Delete</button>
+                </div>
+            </div>
+            <div class="file-content" id="content-{{ loop.index0 }}">{{ file.content }}</div>
+        </li>
+        {% endfor %}
+    </ul>
+</div>
+{% else %}
+<div class="card"><p style="color:var(--text-dim)">No {{ list_label }} list files found. Create one to get started.</p></div>
+{% endif %}
+
+{% include 'list_editor_modal.html' %}
+{% endblock %}
+{% block scripts %}
+{% include 'list_editor_scripts.html' %}
+{% endblock %}

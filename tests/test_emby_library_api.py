@@ -33,6 +33,10 @@ class EmbyLibraryApiTests(unittest.TestCase):
             self.client._make_api_request.call_args_list[1].kwargs['params']['StartIndex'],
             1,
         )
+        self.assertIn(
+            'ChildCount',
+            self.client._make_api_request.call_args_list[0].kwargs['params']['Fields'],
+        )
 
     def test_episode_members_resolve_to_the_series_folder(self):
         series_path = '/mnt/unionfs/television/00s/The Amazing Race (2001) {tvdb-77666}'

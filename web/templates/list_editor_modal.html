@@ -1,0 +1,59 @@
+<div class="modal" id="file-modal">
+    <div class="modal-content" style="max-width:750px;max-height:85vh;overflow-y:auto">
+        <h2 id="modal-title">New {{ list_label }} List</h2>
+        <div class="form-row">
+            <div class="form-group">
+                <label>Filename</label>
+                <input type="text" id="file-name" placeholder="My Collection.txt">
+            </div>
+            <div class="form-group">
+                <label>Custom Collection Name (optional)</label>
+                <input type="text" id="list-collection-name" placeholder="Defaults to YAML name or filename">
+            </div>
+        </div>
+        <div class="form-group">
+            <label>Item Limit (0 = no limit; blank = global setting)</label>
+            <input type="number" id="list-item-limit" min="0" placeholder="0">
+        </div>
+        <div class="form-group">
+            <label>Target Libraries (empty = use global setting)</label>
+            <div id="list-libraries" style="max-height:200px;overflow-y:auto;border:1px solid var(--border);border-radius:4px;padding:10px"></div>
+        </div>
+        <div class="form-group">
+            <label><input type="checkbox" id="create-library"> Export this collection as a symlink library</label>
+            <small style="color:var(--text-dim)">Symlinks update after sync. Automatic Emby library creation is controlled in Settings.</small>
+        </div>
+        <div class="form-group" style="border-top:1px solid var(--border);padding-top:12px">
+            <label><input type="checkbox" id="list-seasonal-enabled" onchange="toggleListSeasonalFields()"> Seasonal collection (annual schedule)</label>
+            <div class="form-row" style="margin-top:10px">
+                <div class="form-group">
+                    <label>Active from (MM-DD)</label>
+                    <input type="text" id="list-season-start" placeholder="10-01" pattern="\d{2}-\d{2}">
+                </div>
+                <div class="form-group">
+                    <label>Active through (MM-DD, inclusive)</label>
+                    <input type="text" id="list-season-end" placeholder="11-01" pattern="\d{2}-\d{2}">
+                </div>
+            </div>
+            <small style="color:var(--text-dim)">Keep list processing enabled. Outside the window, the next sync removes the matching Emby collection and manager-owned symlink exports, not the media or library entry.</small>
+        </div>
+        <div class="form-row">
+            <div class="form-group">
+                <label>Custom Poster URL (optional)</label>
+                <input type="text" id="list-poster-url" placeholder="https://image.tmdb.org/...">
+            </div>
+            <div class="form-group">
+                <label>Custom Backdrop URL (optional)</label>
+                <input type="text" id="list-backdrop-url" placeholder="https://image.tmdb.org/...">
+            </div>
+        </div>
+        <div class="form-group">
+            <label>List Content</label>
+            <textarea id="file-content" rows="10" style="font-family:monospace;font-size:0.85rem"></textarea>
+        </div>
+        <div style="display:flex;gap:10px;justify-content:flex-end">
+            <button class="btn btn-secondary" onclick="closeListEditor()">Cancel</button>
+            <button class="btn btn-primary" onclick="saveListEditor()">Save</button>
+        </div>
+    </div>
+</div>

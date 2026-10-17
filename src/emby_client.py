@@ -1350,7 +1350,7 @@ class EmbyClient(MediaServerClient):
                     params={
                         'IncludeItemTypes': 'BoxSet',
                         'Recursive': 'true',
-                        'Fields': 'Name,SortName',
+                        'Fields': 'Name,SortName,ChildCount',
                         'StartIndex': start_index,
                         'Limit': limit,
                     },

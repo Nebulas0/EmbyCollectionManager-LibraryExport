@@ -5,7 +5,6 @@ import random
 from src.tmdb_client import TmdbClient
 from src.trakt_client import TraktClient
 from src.trakt_list_processor import TraktListProcessor
-from src.list_metadata import ListMetadataManager
 from src.recipe_override import RecipeOverrideManager
 from src.mdblist_client import MDBListClient
 from src.mdblist_processor import MDBListProcessor
@@ -122,6 +121,8 @@ def main():
         logger.error("No media server available for sync. Check your configuration and target selection.")
         sys.exit(1)
 
+    seasonal_collection_sort_names = {}
+
     # Process Trakt lists from traktlists directory FIRST for testing
     try:
         trakt_processor = TraktListProcessor(tmdb, trakt, config)
@@ -134,29 +135,22 @@ def main():
                 try:
                     collection_name = collection_info['name']
                     tmdb_ids = collection_info['tmdb_ids']
-                    
-                    if emby:
-                        # Apply per-collection metadata from list_metadata.json (for .txt files)
-                        file_name = collection_info.get('file_path', '').split('/')[-1]
-                        try:
-                            metadata_mgr = ListMetadataManager(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-                            meta = metadata_mgr.get_list_config('traktlists', file_name)
-                            if meta:
-                                if 'library_ids' in meta and not collection_info.get('library_ids'):
-                                    collection_info['library_ids'] = meta['library_ids']
-                                if 'collection_name' in meta and meta['collection_name']:
-                                    collection_name = meta['collection_name']
-                                    collection_info['name'] = collection_name
-                                if 'poster_url' in meta and not collection_info.get('poster_url'):
-                                    collection_info['poster_url'] = meta['poster_url']
-                                if 'backdrop_url' in meta and not collection_info.get('backdrop_url'):
-                                    collection_info['backdrop_url'] = meta['backdrop_url']
-                                if 'create_library' in meta:
-                                    collection_info['create_library'] = bool(meta['create_library'])
-                        except Exception as e:
-                            logger.warning(f"Could not load metadata for {file_name}: {e}")
-
                     create_library = bool(collection_info.get('create_library', False))
+                    seasonal_rule = normalize_seasonal_rule(
+                        collection_name,
+                        collection_info.get('seasonal'),
+                    )
+                    if seasonal_rule['enabled'] and not is_in_season(seasonal_rule):
+                        _expire_seasonal_collection(emby, collection_name, config)
+                        continue
+                    sort_name = (
+                        seasonal_sort_name(collection_name)
+                        if seasonal_rule['enabled']
+                        else collection_name
+                    )
+                    if seasonal_rule['enabled']:
+                        seasonal_collection_sort_names[collection_name] = sort_name
+
                     if not tmdb_ids:
                         logger.warning(f"No movies found for Trakt collection '{collection_name}', skipping")
                         if emby:
@@ -186,6 +180,7 @@ def main():
                             tmdb_ids,
                             collection_library_ids,
                             clear_when_empty=create_library,
+                            sort_name=sort_name,
                         )
                         
                         if collection_id:
@@ -232,29 +227,22 @@ def main():
                 try:
                     collection_name = collection_info['name']
                     tmdb_ids = collection_info['tmdb_ids']
-                    
-                    if emby:
-                        # Apply per-collection metadata from list_metadata.json
-                        file_name = collection_info.get('file_path', '').split('/')[-1]
-                        try:
-                            metadata_mgr = ListMetadataManager(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-                            meta = metadata_mgr.get_list_config('mdblists', file_name)
-                            if meta:
-                                if 'library_ids' in meta and not collection_info.get('library_ids'):
-                                    collection_info['library_ids'] = meta['library_ids']
-                                if 'collection_name' in meta and meta['collection_name']:
-                                    collection_name = meta['collection_name']
-                                    collection_info['name'] = collection_name
-                                if 'poster_url' in meta and not collection_info.get('poster_url'):
-                                    collection_info['poster_url'] = meta['poster_url']
-                                if 'backdrop_url' in meta and not collection_info.get('backdrop_url'):
-                                    collection_info['backdrop_url'] = meta['backdrop_url']
-                                if 'create_library' in meta:
-                                    collection_info['create_library'] = bool(meta['create_library'])
-                        except Exception as e:
-                            logger.warning(f"Could not load metadata for {file_name}: {e}")
-
                     create_library = bool(collection_info.get('create_library', False))
+                    seasonal_rule = normalize_seasonal_rule(
+                        collection_name,
+                        collection_info.get('seasonal'),
+                    )
+                    if seasonal_rule['enabled'] and not is_in_season(seasonal_rule):
+                        _expire_seasonal_collection(emby, collection_name, config)
+                        continue
+                    sort_name = (
+                        seasonal_sort_name(collection_name)
+                        if seasonal_rule['enabled']
+                        else collection_name
+                    )
+                    if seasonal_rule['enabled']:
+                        seasonal_collection_sort_names[collection_name] = sort_name
+
                     if not tmdb_ids:
                         logger.warning(f"No movies found for MDBList collection '{collection_name}', skipping")
                         if emby:
@@ -284,6 +272,7 @@ def main():
                             tmdb_ids,
                             collection_library_ids,
                             clear_when_empty=create_library,
+                            sort_name=sort_name,
                         )
                         
                         if collection_id:
@@ -320,8 +309,6 @@ def main():
     override_mgr = RecipeOverrideManager(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     recipe_overrides = override_mgr.get_all_overrides()
     recipe_duplicates = override_mgr.get_duplicates()
-    seasonal_collection_sort_names = {}
-    
     # Build the effective recipe list: original recipes + duplicates
     effective_recipes = list(RECIPES)
     for dup in recipe_duplicates:

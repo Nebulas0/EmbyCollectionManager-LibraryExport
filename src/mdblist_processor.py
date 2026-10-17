@@ -11,6 +11,7 @@ import logging
 import yaml
 from typing import List, Dict, Any, Set, Optional
 from pathlib import Path
+from src.list_metadata import ListMetadataManager
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +38,12 @@ class MDBListProcessor:
         mdblists_config = self.config.get('mdblists', {})
         self.enabled = mdblists_config.get('enabled', True)
         self.directory = mdblists_config.get('directory', 'mdblists')
-        self.max_items = mdblists_config.get('max_items_per_collection', 0)
+        try:
+            self.max_items = max(0, int(mdblists_config.get('max_items_per_collection', 0) or 0))
+        except (TypeError, ValueError):
+            self.max_items = 0
+        base_dir = self.config.get('script_dir') or os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        self.list_metadata = ListMetadataManager(base_dir)
         
     def is_enabled(self) -> bool:
         """Check if MDBList processing is enabled."""
@@ -115,6 +121,9 @@ class MDBListProcessor:
         category_id = 13  # Default MDBList category
         poster_url = None
         backdrop_url = None
+        item_limit = None
+        create_library = False
+        seasonal = None
         
         is_yaml = file_path.suffix in ('.yaml', '.yml')
         
@@ -138,6 +147,9 @@ class MDBListProcessor:
                         category_id = cat
                     poster_url = yaml_data.get('poster_url')
                     backdrop_url = yaml_data.get('backdrop_url')
+                    item_limit = yaml_data.get('item_limit')
+                    create_library = bool(yaml_data.get('create_library', False))
+                    seasonal = yaml_data.get('seasonal')
                     items = yaml_data.get('items', [])
                     # Convert items to text format for processing
                     content = '\n'.join(str(i) for i in items) if items else ''
@@ -160,8 +172,35 @@ class MDBListProcessor:
                             category_id = cat
                         poster_url = yaml_data.get('poster_url')
                         backdrop_url = yaml_data.get('backdrop_url')
+                        item_limit = yaml_data.get('item_limit')
+                        create_library = bool(yaml_data.get('create_library', False))
+                        seasonal = yaml_data.get('seasonal')
             except yaml.YAMLError:
                 pass
+
+        try:
+            metadata = self.list_metadata.get_list_config('mdblists', file_path.name)
+        except Exception as exc:
+            logger.warning("Could not load saved settings for %s: %s", file_path.name, exc)
+            metadata = {}
+        if not isinstance(metadata, dict):
+            metadata = {}
+        if 'collection_name' in metadata:
+            custom_name = metadata.get('collection_name')
+        if 'library_ids' in metadata:
+            library_ids = metadata.get('library_ids')
+        if 'category_id' in metadata:
+            category_id = metadata.get('category_id') or category_id
+        if 'poster_url' in metadata:
+            poster_url = metadata.get('poster_url')
+        if 'backdrop_url' in metadata:
+            backdrop_url = metadata.get('backdrop_url')
+        if 'item_limit' in metadata:
+            item_limit = metadata.get('item_limit')
+        if 'create_library' in metadata:
+            create_library = bool(metadata['create_library'])
+        if 'seasonal' in metadata:
+            seasonal = metadata['seasonal']
         
         if custom_name:
             collection_name = custom_name
@@ -172,10 +211,14 @@ class MDBListProcessor:
         if not tmdb_ids:
             logger.warning(f"No valid movies found in '{file_path.name}'")
             
-        # Apply max items limit
-        if self.max_items and len(tmdb_ids) > self.max_items:
-            logger.info(f"Limiting collection '{collection_name}' to {self.max_items} items (was {len(tmdb_ids)})")
-            tmdb_ids = tmdb_ids[:self.max_items]
+        raw_limit = self.max_items if item_limit is None else item_limit
+        try:
+            effective_limit = max(0, int(raw_limit or 0))
+        except (TypeError, ValueError):
+            effective_limit = self.max_items
+        if effective_limit and len(tmdb_ids) > effective_limit:
+            logger.info(f"Limiting collection '{collection_name}' to {effective_limit} items (was {len(tmdb_ids)})")
+            tmdb_ids = tmdb_ids[:effective_limit]
             
         logger.info(f"Found {len(tmdb_ids)} movies for collection '{collection_name}'")
         
@@ -188,7 +231,10 @@ class MDBListProcessor:
             'file_path': str(file_path),
             'library_ids': library_ids,
             'poster_url': poster_url,
-            'backdrop_url': backdrop_url
+            'backdrop_url': backdrop_url,
+            'item_limit': effective_limit,
+            'create_library': create_library,
+            'seasonal': seasonal,
         }
     
     def extract_tmdb_ids_from_content(self, content: str, collection_name: str) -> List[int]:

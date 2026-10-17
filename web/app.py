@@ -539,6 +539,72 @@ def _safe_filename(name):
     return name
 
 
+def _list_file_settings(filename, content):
+    parsed = None
+    if filename.endswith(('.yaml', '.yml')):
+        try:
+            parsed = yaml.safe_load(content)
+        except yaml.YAMLError:
+            parsed = None
+    elif content.strip().startswith('---') and '\n---\n' in content:
+        try:
+            frontmatter = content.split('\n---\n', 1)[0].strip().lstrip('-').strip()
+            parsed = yaml.safe_load(frontmatter)
+        except yaml.YAMLError:
+            parsed = None
+    if not isinstance(parsed, dict):
+        return {}
+    supported = {
+        'collection_name',
+        'library_ids',
+        'item_limit',
+        'poster_url',
+        'backdrop_url',
+        'category_id',
+        'create_library',
+        'seasonal',
+    }
+    return {key: parsed[key] for key in supported if key in parsed}
+
+
+@app.route('/api/list_editor')
+def list_editor_data():
+    list_type = request.args.get('type', '')
+    filename = _safe_filename(request.args.get('filename', ''))
+    if list_type not in {'traktlists', 'mdblists'} or not filename:
+        return jsonify({'error': 'Invalid list type or filename'}), 400
+    config = load_config()
+    directory = config.get(list_type, {}).get('directory', list_type)
+    file_path = os.path.join(BASE_DIR, directory, filename)
+    try:
+        with open(file_path, 'r', encoding='utf-8') as source:
+            content = source.read()
+    except OSError:
+        return jsonify({'error': 'List file not found'}), 404
+
+    from src.list_metadata import ListMetadataManager
+    metadata = ListMetadataManager(BASE_DIR).get_list_config(list_type, filename)
+    effective = _list_file_settings(filename, content)
+    if isinstance(metadata, dict):
+        effective.update(metadata)
+
+    from src.seasonal import normalize_seasonal_rule, seasonal_defaults_for_recipe
+    collection_name = effective.get('collection_name') or Path(filename).stem
+    try:
+        effective['seasonal'] = normalize_seasonal_rule(
+            collection_name,
+            effective.get('seasonal'),
+        )
+    except ValueError:
+        effective['seasonal'] = normalize_seasonal_rule(collection_name, None)
+
+    return jsonify({
+        'content': content,
+        'config': effective,
+        'seasonal_defaults': seasonal_defaults_for_recipe(collection_name),
+    })
+
+
 @app.route('/traktlists')
 def traktlists():
     config = load_config()
@@ -551,7 +617,13 @@ def traktlists():
                 with open(os.path.join(p, f), 'r', encoding='utf-8') as fh:
                     c = fh.read()
                 files.append({'name': f, 'content': c, 'lines': len(c.splitlines())})
-    return render_template('traktlists.html', files=files, directory=d)
+    return render_template(
+        'list_manager.html',
+        files=files,
+        directory=d,
+        list_type='traktlists',
+        list_label='Trakt',
+    )
 
 
 @app.route('/traktlists/save', methods=['POST'])
@@ -603,7 +675,13 @@ def mdblists():
                 with open(os.path.join(p, f), 'r', encoding='utf-8') as fh:
                     c = fh.read()
                 files.append({'name': f, 'content': c, 'lines': len(c.splitlines())})
-    return render_template('mdblists.html', files=files, directory=d)
+    return render_template(
+        'list_manager.html',
+        files=files,
+        directory=d,
+        list_type='mdblists',
+        list_label='MDBList',
+    )
 
 
 @app.route('/mdblists/save', methods=['POST'])
@@ -949,10 +1027,29 @@ def list_config():
     else:
         data = request.json
         list_type = data.get('type')
-        filename = data.get('filename')
+        filename = _safe_filename(data.get('filename', ''))
         config = data.get('config', {})
-        if not list_type or not filename:
+        if list_type not in {'traktlists', 'mdblists'} or not filename:
             return jsonify({'error': 'Missing type or filename'}), 400
+        if not isinstance(config, dict):
+            return jsonify({'error': 'List config must be an object'}), 400
+        if config.get('item_limit') is not None:
+            try:
+                item_limit = int(config['item_limit'])
+            except (TypeError, ValueError):
+                return jsonify({'error': 'Item limit must be a number'}), 400
+            if item_limit < 0 or item_limit > 10000:
+                return jsonify({'error': 'Item limit must be between 0 and 10000'}), 400
+            config['item_limit'] = item_limit
+        if 'seasonal' in config:
+            from src.seasonal import normalize_seasonal_rule
+            try:
+                config['seasonal'] = normalize_seasonal_rule(
+                    config.get('collection_name') or Path(filename).stem,
+                    config['seasonal'],
+                )
+            except ValueError as exc:
+                return jsonify({'error': str(exc)}), 400
         from src.list_metadata import ListMetadataManager
         mgr = ListMetadataManager(BASE_DIR)
         current_config = mgr.get_list_config(list_type, filename)

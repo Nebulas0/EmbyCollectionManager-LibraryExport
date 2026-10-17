@@ -31,6 +31,7 @@ class ArtworkProxyTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertIn(b'/api/collection_image/12345/Primary', response.data)
+        self.assertIn(b'2 items', response.data)
         self.assertNotIn(b'admin-token', response.data)
         self.assertNotIn(b'http://emby.internal:8096', response.data)
 
