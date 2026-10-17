@@ -72,6 +72,7 @@ class LibraryExportSettingsTests(unittest.TestCase):
                 'movies_days': '21',
                 'movies_limit': '12',
                 'movies_library_ids': 'movie-lib',
+                'most_watched_auto_create_emby_library': 'off',
                 'tv_shows_enabled': 'on',
                 'tv_shows_days': '14',
                 'tv_shows_limit': '8',
@@ -86,6 +87,7 @@ class LibraryExportSettingsTests(unittest.TestCase):
         self.assertEqual(saved['most_watched']['tv_shows'], {
             'enabled': True, 'days': 14, 'limit': 8, 'library_ids': ['tv-lib'],
         })
+        self.assertFalse(saved['most_watched']['auto_create_emby_library'])
 
     def test_most_watched_page_shows_default_values_and_plugin_setup_hint(self):
         response = self.client.get('/most-watched')

@@ -70,6 +70,20 @@ def normalize_most_watched_settings(value: Any) -> Dict[str, Dict[str, Any]]:
     return normalized
 
 
+def should_create_most_watched_libraries(config: Dict[str, Any]) -> bool:
+    exports = config.get('library_exports') or {}
+    global_default = exports.get('auto_create_emby_library', True)
+    default_enabled = (
+        global_default.strip().lower() in {'1', 'true', 'yes', 'on'}
+        if isinstance(global_default, str)
+        else bool(global_default)
+    )
+    value = (config.get('most_watched') or {}).get('auto_create_emby_library')
+    if value is None:
+        return default_enabled
+    return value.strip().lower() in {'1', 'true', 'yes', 'on'} if isinstance(value, str) else bool(value)
+
+
 class PlaybackReportingClient:
     """Read per-item playback events from the Emby Playback Reporting plugin."""
 
@@ -269,6 +283,8 @@ class MostWatchedLibraryExporter:
         except Exception:
             image = None
         if image is None:
+            image = self._local_source_poster(item, Image)
+        if image is None:
             image = Image.new('RGB', (600, 900), (30, 37, 43))
 
         draw = ImageDraw.Draw(image)
@@ -301,6 +317,32 @@ class MostWatchedLibraryExporter:
         output = BytesIO()
         image.save(output, format='JPEG', quality=92)
         return output.getvalue()
+
+    def _local_source_poster(self, item: Dict[str, Any], image_module):
+        raw_path = item.get('Path')
+        if not isinstance(raw_path, str) or not raw_path:
+            return None
+        item_path = Path(os.path.abspath(raw_path))
+        if not any(_within(item_path, root) for root in self.media_mounts):
+            return None
+        directory = item_path if item_path.is_dir() else item_path.parent
+        names = ['poster.jpg', 'poster.png', 'folder.jpg', 'folder.png', 'cover.jpg', 'cover.png']
+        if item_path.is_file():
+            names.extend([
+                f'{item_path.stem}-poster.jpg',
+                f'{item_path.stem}.jpg',
+                f'{item_path.stem}-poster.png',
+            ])
+        for name in names:
+            candidate = directory / name
+            if not candidate.is_file():
+                continue
+            try:
+                with image_module.open(candidate) as source:
+                    return source.convert('RGB')
+            except Exception:
+                continue
+        return None
 
     @staticmethod
     def _item_folder_name(item: Dict[str, Any], rank: int, is_series: bool = False) -> str:
@@ -791,7 +833,7 @@ def _save_most_watched_results(state_dir: str, state: Dict[str, Any]) -> None:
 def sync_most_watched(emby_client, config: Dict[str, Any], state_dir: str) -> Dict[str, Any]:
     settings = normalize_most_watched_settings(config.get('most_watched'))
     exports = config.get('library_exports') or {}
-    auto_create = exports.get('auto_create_emby_library', True) is not False
+    auto_create = should_create_most_watched_libraries(config)
     previous = load_most_watched_results(state_dir)
     exporter = MostWatchedLibraryExporter(
         emby_client,

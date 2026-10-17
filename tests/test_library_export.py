@@ -71,6 +71,24 @@ class CollectionLibraryExporterTests(unittest.TestCase):
         self.assertEqual(emby.refreshed, ['library-id'])
         self.assertEqual(media_file.read_text(encoding='utf-8'), 'media')
 
+    def test_mp4_item_uses_same_directory_symlink_logic(self):
+        movie_dir = self.media_root / 'movies' / 'Example Movie (2020)'
+        movie_dir.mkdir(parents=True)
+        media_file = movie_dir / 'Example Movie (2020).mp4'
+        media_file.write_text('media', encoding='utf-8')
+        emby = FakeEmbyClient([{
+            'Id': 'movie-id',
+            'Type': 'Movie',
+            'Path': str(media_file),
+        }])
+
+        self.assertTrue(self.create_exporter(emby).export_collection('collection-id', 'MP4 Picks'))
+
+        link = self.output_mount / 'MP4 Picks-library' / movie_dir.name
+        self.assertTrue(link.is_symlink())
+        self.assertEqual(link.resolve(), movie_dir)
+        self.assertEqual(media_file.read_text(encoding='utf-8'), 'media')
+
     def test_series_folder_is_linked_without_episode_path_guessing(self):
         series_dir = self.media_root / 'television' / '00s' / 'The Amazing Race (2001) {tvdb-77666}'
         season_dir = series_dir / 'Season 39'

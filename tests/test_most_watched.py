@@ -10,6 +10,7 @@ from src.most_watched import (
     PlaybackReportingClient,
     _rank_shows_from_events,
     normalize_most_watched_settings,
+    should_create_most_watched_libraries,
     sync_most_watched,
 )
 
@@ -91,6 +92,19 @@ class MostWatchedSettingsTests(unittest.TestCase):
         self.assertEqual(settings['tv_shows'], {
             'enabled': False, 'days': 14, 'limit': 100, 'library_ids': None,
         })
+
+    def test_most_watched_library_creation_can_inherit_or_override_global_setting(self):
+        self.assertTrue(should_create_most_watched_libraries({
+            'library_exports': {'auto_create_emby_library': True},
+        }))
+        self.assertFalse(should_create_most_watched_libraries({
+            'library_exports': {'auto_create_emby_library': True},
+            'most_watched': {'auto_create_emby_library': False},
+        }))
+        self.assertTrue(should_create_most_watched_libraries({
+            'library_exports': {'auto_create_emby_library': False},
+            'most_watched': {'auto_create_emby_library': True},
+        }))
 
 
 class PlaybackReportingClientTests(unittest.TestCase):
@@ -266,6 +280,8 @@ class MostWatchedLibraryExporterTests(unittest.TestCase):
         movie_dir.mkdir(parents=True)
         movie_path = movie_dir / 'The Killers.mkv'
         movie_path.write_bytes(b'original-media')
+        from PIL import Image
+        Image.new('RGB', (80, 120), (10, 20, 220)).save(movie_dir / 'poster.jpg')
         item = {
             'Id': 'movie-id',
             'Type': 'Movie',
@@ -288,7 +304,11 @@ class MostWatchedLibraryExporterTests(unittest.TestCase):
         self.assertEqual(pointers[0].resolve(), movie_path)
         nfo = pointers[0].with_suffix('.nfo').read_text()
         self.assertIn('<sorttitle>01 - The Killers</sorttitle>', nfo)
-        self.assertTrue((pointers[0].parent / 'poster.jpg').is_file())
+        ranked_poster = pointers[0].parent / 'poster.jpg'
+        self.assertTrue(ranked_poster.is_file())
+        with Image.open(ranked_poster) as poster:
+            source_pixel = poster.getpixel((75, 115))
+            self.assertTrue(all(abs(actual - expected) <= 3 for actual, expected in zip(source_pixel, (10, 20, 220))))
         self.assertEqual(list(output.rglob('*.strm')), [])
         self.assertTrue(movie_path.is_file())
         self.assertEqual(emby.created_libraries, [])
@@ -297,6 +317,32 @@ class MostWatchedLibraryExporterTests(unittest.TestCase):
         self.assertFalse(pointers[0].exists())
         self.assertTrue(movie_path.exists())
         self.assertTrue(emby.refreshed_by_name)
+
+    def test_ranked_movie_symlink_preserves_mp4_extension(self):
+        emby = FakeEmby()
+        exporter = self.make_exporter(emby)
+        movie_dir = self.media_root / 'movies' / 'Example Movie (2020)'
+        movie_dir.mkdir(parents=True)
+        movie_path = movie_dir / 'Example Movie (2020).mp4'
+        movie_path.write_bytes(b'original-mp4')
+        item = {
+            'Id': 'mp4-id',
+            'Type': 'Movie',
+            'Name': 'Example Movie',
+            'ProductionYear': 2020,
+            'Path': str(movie_path),
+            'ProviderIds': {'Tmdb': '12345'},
+        }
+
+        result = exporter.sync(
+            'movies',
+            [{'item': item, 'name': item['Name'], 'plays': 3, 'watch_seconds': 6000}],
+            create_emby_library=False,
+        )
+
+        link = next(Path(result['library_path']).rglob('*.mp4'))
+        self.assertTrue(link.is_symlink())
+        self.assertEqual(link.resolve(), movie_path)
 
     def test_ranked_show_contains_one_series_with_season_episode_symlinks(self):
         emby = FakeEmby()

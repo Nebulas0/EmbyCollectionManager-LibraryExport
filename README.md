@@ -8,7 +8,7 @@ This is a customized Emby Collection Manager based on [Nebulas0/EmbyCollectionMa
 - Opt individual recipe, Trakt list, or MDBList collections into a symlink-folder export.
 - Choose the Emby media path root and writable export directory in Settings.
 - Choose globally whether opted-in exports are automatically registered as Emby libraries. With automatic creation off, the symlink folders are still maintained for manual library setup.
-- Creates movie links to the movie’s containing directory, including for `.mkv` and `.strm` media.
+- Creates movie links to the movie’s containing directory without assuming a file extension, including `.mkv`, `.mp4`, and `.strm`.
 - Links a TV series at its Series folder, preserving all seasons and episodes. If a collection contains episodes or seasons, the manager resolves their Emby `SeriesId` and links the series root once.
 - Reconciles symlinks on the normal sync interval and removes only links recorded in its own manifest. It never deletes the source media or automatically deletes an Emby library entry.
 - Optional Most Watched libraries use Playback Reporting data, with independent lookback days and top-item limits for movies and TV shows. Ranked posters show the item's position and NFO sort titles preserve the order.
@@ -84,11 +84,11 @@ The Most Watched tab reads per-item playback events from Playback Reporting's `U
 
 Movies and TV shows each have their own enable switch, library selection, lookback period, and item limit. Both periods default to 14 days and both limits to 10 items; exports are disabled until opted in. If no source library selection has been saved yet, all matching movie or TV libraries are selected. The normal manager sync refreshes enabled lists; the tab's manual button runs the full sync.
 
-Most Watched creates a real symlink to each selected movie file and to each episode file under one ranked Series folder. It adds local NFO sidecars and a poster with the rank badge; it never copies video data or modifies the source media. The folder prefix and NFO sort title carry the rank so the list sorts in ascending order. Emby should sort the library by Name/Sort Name ascending; a client using a different sort order may need that changed. Regular collection exports keep their existing directory-symlink behavior.
+Most Watched creates a real symlink to each selected movie file and to each episode file under one ranked Series folder, preserving each source file's basename and extension (for example `.mkv` or `.mp4`). A TV entry is one Series folder containing its Season folders and episode symlinks. It adds local NFO sidecars and overlays the rank on the existing Emby poster, falling back to a read-only local poster sidecar when available. It never copies video data or modifies source media/artwork. The folder prefix and NFO sort title carry the rank so the list sorts in ascending order. Emby should sort the library by Name/Sort Name ascending; a client using a different sort order may need that changed. Regular collection exports keep their existing directory-symlink behavior.
 
 When a title is no longer in the selected libraries' ranked results, the next sync prunes only its manifest-owned links and sidecars. Original media and Emby library entries are left untouched.
 
-Automatic Emby library registration follows the global **Automatically create the Emby library for opted-in collections** setting. When that setting is off, the Most Watched output folders are still maintained for manual library setup. The manager never removes an Emby library entry automatically. On Emby 4.9, these are ordinary libraries; the manager does not create HomeScreenCompanion-style per-user Home Screen sections.
+The Most Watched tab has its own automatic-library checkbox. Until you save that option, it inherits the global **Automatically create the Emby library for opted-in collections** setting; after saving, it controls Most Watched independently. When off, ranked symlink folders are still maintained for manual setup. The manager never removes an Emby library entry automatically. On Emby 4.9, these are ordinary libraries; the manager does not create HomeScreenCompanion-style per-user Home Screen sections.
 
 ## Configuration and privacy
 

@@ -195,6 +195,7 @@ def most_watched():
         PlaybackReportingClient,
         load_most_watched_results,
         normalize_most_watched_settings,
+        should_create_most_watched_libraries,
     )
 
     config = load_config()
@@ -213,8 +214,10 @@ def most_watched():
     ]
     saved = False
     error = None
+    most_watched_auto_create = should_create_most_watched_libraries(config)
 
     if request.method == 'POST':
+        most_watched_auto_create = request.form.get('most_watched_auto_create_emby_library') == 'on'
         submitted = {
             'movies': {
                 'enabled': request.form.get('movies_enabled') == 'on',
@@ -244,7 +247,11 @@ def most_watched():
         if invalid_selection:
             error = 'Choose at least one matching Emby source library for each enabled media type.'
         else:
-            config['most_watched'] = settings
+            most_watched_config = config.get('most_watched')
+            most_watched_config = dict(most_watched_config) if isinstance(most_watched_config, dict) else {}
+            most_watched_config.update(settings)
+            most_watched_config['auto_create_emby_library'] = most_watched_auto_create
+            config['most_watched'] = most_watched_config
             if save_config(config):
                 saved = True
             else:
@@ -274,7 +281,7 @@ def most_watched():
         tv_libraries=tv_libraries,
         plugin_available=plugin_available,
         plugin_message=plugin_message,
-        auto_create_emby_library=(config.get('library_exports') or {}).get('auto_create_emby_library', True),
+        auto_create_emby_library=most_watched_auto_create,
         saved=saved,
         error=error,
     )

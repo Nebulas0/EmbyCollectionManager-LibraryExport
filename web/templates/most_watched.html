@@ -27,6 +27,14 @@
 {% endif %}
 
 <form method="post" action="{{ url_for('most_watched') }}">
+    <section class="card mw-library-toggle">
+        <label class="mw-toggle">
+            <input type="checkbox" name="most_watched_auto_create_emby_library"
+                   {% if auto_create_emby_library %}checked{% endif %}>
+            <span>Automatically create the Most Watched Emby libraries</span>
+        </label>
+        <p class="mw-help">When off, the ranked symlink folders are still maintained for manual library setup. Existing Emby libraries are never removed. This Most Watched option is independent of the global collection-export setting.</p>
+    </section>
     <div class="mw-grid">
         {% for key, label in [('movies', 'Movies'), ('tv_shows', 'TV Shows')] %}
         {% set section = settings.get(key, {}) %}
@@ -86,15 +94,16 @@
     <p>
         Playback events are matched by Emby item ID and restricted to the selected source libraries;
         episode plays are grouped under their Series. Ranked entries use symlinks to the original media
-        files plus NFO sidecars and locally generated numbered posters. No video data is copied.
+        files plus NFO sidecars and numbered posters generated from existing Emby/local artwork.
+        Source artwork is read only; no video data is copied.
         Rank-prefixed folders and NFO sort titles keep the order. Emby should sort by Name/Sort Name
         ascending; clients using another sort order may need that changed. Regular collection exports
         continue to use their existing directory symlinks.
     </p>
     {% if auto_create_emby_library %}
-    <p>Automatic Emby library creation is on. Enabled lists will be registered as "Most Watched Movies-library" and "Most Watched TV Shows-library".</p>
+    <p>Most Watched library auto-registration is on. Enabled lists will be registered as "Most Watched Movies-library" and "Most Watched TV Shows-library".</p>
     {% else %}
-    <p>Automatic Emby library creation is off. Enabled lists will still be maintained in the export folder for manual library setup.</p>
+    <p>Most Watched library auto-registration is off. Enabled lists will still be maintained in the export folder for manual library setup.</p>
     {% endif %}
 </section>
 
@@ -142,6 +151,7 @@
 <style>
     .mw-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:16px; margin:18px 0; }
     .mw-settings-card, .mw-note, .mw-grid .card { padding:20px; }
+    .mw-library-toggle { padding:18px 20px; margin:16px 0; }
     .mw-card-heading, .mw-results-heading, .mw-actions { display:flex; align-items:center; justify-content:space-between; gap:14px; }
     .mw-card-heading h2 { margin:0; font-size:1.1rem; }
     .mw-toggle { display:flex; align-items:center; gap:8px; font-size:.92rem; }
