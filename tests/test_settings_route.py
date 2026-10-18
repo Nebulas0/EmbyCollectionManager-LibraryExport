@@ -135,6 +135,10 @@ class LibraryExportSettingsTests(unittest.TestCase):
         ]
         with patch.object(web_app, 'DEFAULT_OUTPUT_ROOT', '/mnt/local/exports'), patch.object(
             web_app,
+            'OUTPUT_MOUNT_ROOT',
+            Path('/mnt/local/exports'),
+        ), patch.object(
+            web_app,
             'get_emby_libraries',
             return_value=libraries,
         ):
@@ -162,6 +166,10 @@ class LibraryExportSettingsTests(unittest.TestCase):
         }]
         with patch.object(web_app, 'DEFAULT_OUTPUT_ROOT', '/mnt/local/exports'), patch.object(
             web_app,
+            'OUTPUT_MOUNT_ROOT',
+            Path('/mnt/local/exports'),
+        ), patch.object(
+            web_app,
             'get_emby_libraries',
             return_value=libraries,
         ):
@@ -170,6 +178,24 @@ class LibraryExportSettingsTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn(b'name="movies_target_library_id"', response.data)
         self.assertIn(b'Top Played Movies', response.data)
+
+    def test_most_watched_target_selector_shows_ineligible_libraries_as_disabled(self):
+        libraries = [{
+            'Id': 'source-movies',
+            'Name': 'Movies Outside Output Mount',
+            'CollectionType': 'movies',
+            'Locations': ['/storage/movies'],
+        }]
+        with patch.object(web_app, 'OUTPUT_MOUNT_ROOT', Path('/mnt/local/exports')), patch.object(
+            web_app,
+            'get_emby_libraries',
+            return_value=libraries,
+        ):
+            response = self.client.get('/most-watched')
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b'value="source-movies" disabled', response.data)
+        self.assertIn(b'outside the Manager writable output mount', response.data)
 
     def test_most_watched_page_shows_default_values_and_plugin_setup_hint(self):
         response = self.client.get('/most-watched')

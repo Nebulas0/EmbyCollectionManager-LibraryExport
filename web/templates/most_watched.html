@@ -101,20 +101,21 @@
                 <p class="mw-help">These choices generate local Poster and/or Thumb/Landscape files; source artwork stays unchanged. Which one Emby's HomeScreen displays is configured separately in the STRM Bridge plugin.</p>
             </div>
             {% set target_library_options = target_movie_libraries if key == 'movies' else target_tv_libraries %}
+            {% set has_target_library_options = has_target_movie_libraries if key == 'movies' else has_target_tv_libraries %}
             <label class="mw-target-library">
                 <span>Existing output library to display in Emby (optional)</span>
                 <select name="{{ key }}_target_library_id">
                     <option value="">Use the default Most Watched output library</option>
                     {% for library in target_library_options %}
-                    <option value="{{ library.get('Id') }}"
+                    <option value="{{ library.get('Id') }}" {% if not library.get('_target_eligible') %}disabled{% endif %}
                             {% if section.get('target_library_id') == (library.get('Id')|string) %}selected{% endif %}>
-                        {{ library.get('Name', 'Unnamed library') }}
+                        {{ library.get('Name', 'Unnamed library') }}{% if not library.get('_target_eligible') %} — unavailable: {{ library.get('_target_reason') }}{% endif %}
                     </option>
                     {% endfor %}
                 </select>
-                <small class="mw-help">Select an existing Movies/TV library whose single folder is inside the configured export root. The manager writes its ranked files there and refreshes only that library. If blank, the current default folder/library name is used.</small>
-                {% if not target_library_options %}
-                <small class="mw-help">No eligible existing output library was found. Create the target library on a dedicated folder inside the configured export root, or leave the default selected.</small>
+                <small class="mw-help">Select an eligible existing Movies/TV library. The manager writes to its single folder inside the writable output mount and refreshes only that library. Libraries outside that mount remain visible but disabled; add a matching read-write mount before targeting them. If blank, the current default folder/library name is used.</small>
+                {% if not has_target_library_options %}
+                <small class="mw-help">No eligible target is configured yet. Create the output library on a dedicated folder inside the Manager's writable output mount, or leave the default selected.</small>
                 {% endif %}
             </label>
             {% set selected_library_ids = section.get('library_ids') %}

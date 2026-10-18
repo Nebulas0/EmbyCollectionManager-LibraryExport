@@ -6,7 +6,7 @@
     <ImplicitUsings>disable</ImplicitUsings>
     <AssemblyName>EmbyCollectionManagerStrmBridge</AssemblyName>
     <RootNamespace>EmbyCollectionManagerStrmBridge</RootNamespace>
-    <Version>1.2.0</Version>
+    <Version>1.3.0</Version>
     <CopyLocalLockFileAssemblies>false</CopyLocalLockFileAssemblies>
   </PropertyGroup>
 

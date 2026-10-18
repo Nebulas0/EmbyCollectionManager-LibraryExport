@@ -5,16 +5,23 @@
             <h1>Most Watched HomeScreen</h1>
             <p>
                 Configure a dedicated, per-user HomeScreen section for each manager-owned Most Watched library.
-                Library targets are selected on the Collection Manager's Most Watched page.
+                Select the same Movies/TV target library here and on the Collection Manager's Most Watched page.
             </p>
             <div id="mw-config-error" class="fieldDescription" role="alert"></div>
             <div id="mw-config-status" class="fieldDescription"></div>
 
             <section class="verticalSection">
                 <h2>Movies</h2>
+                <div class="selectContainer">
+                    <label class="selectLabel" for="mw-movie-library">Most Watched Movies library</label>
+                    <select id="mw-movie-library" is="emby-select">
+                        <option value="">Auto-detect Manager target library</option>
+                    </select>
+                </div>
+                <div class="fieldDescription">Pick the same library selected on the Manager page, or leave Auto to follow its active output manifest.</div>
                 <label class="inputLabel inputLabelUnfocused" for="mw-movie-users">HomeScreen users</label>
                 <select id="mw-movie-users" is="emby-select" multiple size="6"></select>
-                <div class="fieldDescription">Only selected users receive the dedicated Top Played Movies section.</div>
+                <div class="fieldDescription">Choose specific users or All users. New users are picked up the next time the bridge synchronizes.</div>
                 <div class="selectContainer">
                     <label class="selectLabel" for="mw-movie-image">HomeScreen image</label>
                     <select id="mw-movie-image" is="emby-select">
@@ -41,9 +48,16 @@
 
             <section class="verticalSection">
                 <h2>TV Shows</h2>
+                <div class="selectContainer">
+                    <label class="selectLabel" for="mw-tv-library">Most Watched TV library</label>
+                    <select id="mw-tv-library" is="emby-select">
+                        <option value="">Auto-detect Manager target library</option>
+                    </select>
+                </div>
+                <div class="fieldDescription">Pick the same library selected on the Manager page, or leave Auto to follow its active output manifest.</div>
                 <label class="inputLabel inputLabelUnfocused" for="mw-tv-users">HomeScreen users</label>
                 <select id="mw-tv-users" is="emby-select" multiple size="6"></select>
-                <div class="fieldDescription">Only selected users receive the dedicated Top Played TV Shows section.</div>
+                <div class="fieldDescription">Choose specific users or All users. New users are picked up the next time the bridge synchronizes.</div>
                 <div class="selectContainer">
                     <label class="selectLabel" for="mw-tv-image">HomeScreen image</label>
                     <select id="mw-tv-image" is="emby-select">
@@ -69,6 +83,9 @@
             </section>
 
             <div class="fieldDescription">
+                Choose the same Movies/TV output library as on the Manager's `/most-watched` page, or leave Auto-detect
+                to follow the active library recorded in the Manager's manifest.
+                <br />
                 Poster and Thumb/Landscape files are generated separately on the Manager's Most Watched page.
                 Enable the matching image version there as well. These settings affect only this plugin's
                 dedicated Top Played sections. The bridge excludes the selected output library from other

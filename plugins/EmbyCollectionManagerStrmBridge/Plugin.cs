@@ -62,6 +62,10 @@ namespace EmbyCollectionManagerStrmBridge
 
     public sealed class PluginConfiguration : BasePluginConfiguration
     {
+        public string MovieHomeSectionLibraryId { get; set; } = string.Empty;
+
+        public string TvHomeSectionLibraryId { get; set; } = string.Empty;
+
         public List<string> MovieHomeSectionUserIds { get; set; } = new List<string>();
 
         public List<string> TvHomeSectionUserIds { get; set; } = new List<string>();

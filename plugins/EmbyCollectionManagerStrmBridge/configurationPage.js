@@ -4,9 +4,10 @@ define(['emby-input', 'emby-button', 'emby-select'], function () {
     var pluginId = '3d9e8cda-9217-4ca9-9353-8c89adda7789';
 
     function selectedValues(select) {
-        return Array.from(select.selectedOptions).map(function (option) {
+        var selected = Array.from(select.selectedOptions).map(function (option) {
             return option.value;
         });
+        return selected.indexOf('*') >= 0 ? ['*'] : selected;
     }
 
     function setSelectedValues(select, values) {
@@ -32,15 +33,52 @@ define(['emby-input', 'emby-button', 'emby-select'], function () {
             ['mw-movie-users', 'mw-tv-users'].forEach(function (id) {
                 var select = view.querySelector('#' + id);
                 select.innerHTML = '';
+                var allOption = document.createElement('option');
+                allOption.value = '*';
+                allOption.textContent = 'All users';
+                select.appendChild(allOption);
                 (users || []).forEach(function (user) {
                     var option = document.createElement('option');
                     option.value = user.Id;
                     option.textContent = user.Name || user.Id;
                     select.appendChild(option);
                 });
+                select.addEventListener('change', function () {
+                    var all = select.options[0];
+                    if (all.selected) {
+                        Array.from(select.options).slice(1).forEach(function (option) {
+                            option.selected = false;
+                        });
+                    }
+                });
             });
             setSelectedValues(view.querySelector('#mw-movie-users'), config.MovieHomeSectionUserIds);
             setSelectedValues(view.querySelector('#mw-tv-users'), config.TvHomeSectionUserIds);
+        });
+    }
+
+    function loadLibraries(view, config) {
+        var url = window.ApiClient.getUrl('Library/VirtualFolders');
+        return fetch(url, {headers: requestHeaders()}).then(function (response) {
+            if (!response.ok) throw new Error('Emby returned HTTP ' + response.status + ' loading libraries.');
+            return response.json();
+        }).then(function (libraries) {
+            [
+                {id: 'mw-movie-library', type: 'movies', selected: config.MovieHomeSectionLibraryId},
+                {id: 'mw-tv-library', type: 'tvshows', selected: config.TvHomeSectionLibraryId}
+            ].forEach(function (spec) {
+                var select = view.querySelector('#' + spec.id);
+                select.innerHTML = '<option value="">Auto-detect Manager target library</option>';
+                (libraries || []).filter(function (library) {
+                    return String(library.CollectionType || '').toLowerCase() === spec.type;
+                }).forEach(function (library) {
+                    var option = document.createElement('option');
+                    option.value = library.ItemId || library.Id;
+                    option.textContent = library.Name || option.value;
+                    select.appendChild(option);
+                });
+                select.value = spec.selected || '';
+            });
         });
     }
 
@@ -54,7 +92,7 @@ define(['emby-input', 'emby-button', 'emby-select'], function () {
             view.querySelector('#mw-tv-sort').value = config.TvHomeSectionSortBy || 'SortName';
             view.querySelector('#mw-movie-order').value = config.MovieHomeSectionSortOrder || 'Ascending';
             view.querySelector('#mw-tv-order').value = config.TvHomeSectionSortOrder || 'Ascending';
-            return loadUsers(view, config);
+            return Promise.all([loadUsers(view, config), loadLibraries(view, config)]);
         }).catch(function (error) {
             view.querySelector('#mw-config-error').textContent =
                 'Could not load plugin settings: ' + (error.message || error);
@@ -71,6 +109,8 @@ define(['emby-input', 'emby-button', 'emby-select'], function () {
 
         window.ApiClient.getPluginConfiguration(pluginId).then(function (config) {
             config = config || {};
+            config.MovieHomeSectionLibraryId = view.querySelector('#mw-movie-library').value;
+            config.TvHomeSectionLibraryId = view.querySelector('#mw-tv-library').value;
             config.MovieHomeSectionUserIds = selectedValues(view.querySelector('#mw-movie-users'));
             config.TvHomeSectionUserIds = selectedValues(view.querySelector('#mw-tv-users'));
             config.MovieHomeSectionImageType = view.querySelector('#mw-movie-image').value;

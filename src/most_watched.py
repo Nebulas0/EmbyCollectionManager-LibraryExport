@@ -281,6 +281,7 @@ class MostWatchedLibraryExporter:
         )
         self.media_root = Path(media)
         self.output_root = Path(output)
+        self.output_mount_root = Path(output_mount_root).resolve()
         if isinstance(media_mount_root, (str, os.PathLike)):
             media_mounts = [Path(media_mount_root)]
         else:
@@ -600,11 +601,17 @@ class MostWatchedLibraryExporter:
                 raise ValueError('The selected target library must have exactly one folder location')
             raw_path = Path(os.path.abspath(locations[0]))
             library_dir = raw_path.resolve()
-            output_root = self.output_root.resolve()
-            if raw_path.is_symlink() or library_dir == output_root or not _within(library_dir, output_root):
+            output_mount_root = self.output_mount_root
+            overlaps_media = any(
+                _within(library_dir, media_root) or _within(media_root, library_dir)
+                for media_root in self.media_mounts
+            )
+            if raw_path.is_symlink() or library_dir == output_mount_root or not _within(library_dir, output_mount_root):
                 raise ValueError(
-                    'The selected target library folder must be a non-symlink path inside the configured export root'
+                    'The selected target library folder must be a non-symlink path inside the writable export mount'
                 )
+            if overlaps_media:
+                raise ValueError('The selected target library folder must not overlap any source media mount')
             if library_dir.exists() and not library_dir.is_dir():
                 raise ValueError('The selected target library location is not a directory')
             return str(target.get('Name') or library_name), collection_type, library_dir, str(target_library_id)
@@ -654,10 +661,10 @@ class MostWatchedLibraryExporter:
             if active_library_dir is not None else None
         )
         try:
-            manifests = self.output_root.rglob(self._manifest_name)
+            manifests = self.output_mount_root.rglob(self._manifest_name)
             for manifest_path in manifests:
                 library_dir = manifest_path.parent
-                if not _within(library_dir, self.output_root) or library_dir.is_symlink():
+                if not _within(library_dir, self.output_mount_root) or library_dir.is_symlink():
                     continue
                 path_key = os.path.normcase(os.path.abspath(str(library_dir)))
                 if path_key == active_key:
@@ -665,6 +672,12 @@ class MostWatchedLibraryExporter:
                 try:
                     manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
                     if not isinstance(manifest, dict):
+                        continue
+                    if (
+                        manifest.get('version') != 1
+                        or not isinstance(manifest.get('files'), dict)
+                        or not isinstance(manifest.get('links'), dict)
+                    ):
                         continue
                     old_kind = manifest.get('kind')
                     if old_kind is None:

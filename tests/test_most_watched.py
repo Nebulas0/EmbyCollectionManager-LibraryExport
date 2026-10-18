@@ -327,8 +327,8 @@ class MostWatchedLibraryExporterTests(unittest.TestCase):
             emby,
             media_root=str(self.media_root),
             output_root=str(self.output_root),
-            media_mount_root=self.base,
-            output_mount_root=self.base,
+            media_mount_root=self.media_root,
+            output_mount_root=self.output_root,
         )
 
     def test_selected_output_library_is_used_and_refreshed_by_id(self):
@@ -371,17 +371,36 @@ class MostWatchedLibraryExporterTests(unittest.TestCase):
         self.assertEqual(manifest['kind'], 'movies')
         self.assertEqual(manifest['library_id'], 'top-movies-id')
 
-    def test_selected_output_library_must_be_inside_configured_export_root(self):
+    def test_selected_output_library_must_be_inside_writable_export_mount(self):
         emby = FakeEmby()
         emby.libraries = [{
             'Id': 'unsafe-id',
             'Name': 'Unsafe',
             'CollectionType': 'movies',
+            'Locations': [str(self.base.parent / 'outside-output')],
+        }]
+
+        with self.assertRaisesRegex(ValueError, 'inside the writable export mount'):
+            self.make_exporter(emby)._library_dir('movies', 'unsafe-id')
+
+    def test_selected_output_library_must_not_overlap_source_media_mount(self):
+        emby = FakeEmby()
+        emby.libraries = [{
+            'Id': 'media-id',
+            'Name': 'Movies',
+            'CollectionType': 'movies',
             'Locations': [str(self.media_root / 'movies')],
         }]
 
-        with self.assertRaisesRegex(ValueError, 'inside the configured export root'):
-            self.make_exporter(emby)._library_dir('movies', 'unsafe-id')
+        overlapping_mounts = MostWatchedLibraryExporter(
+            emby,
+            media_root=str(self.media_root),
+            output_root=str(self.output_root),
+            media_mount_root=self.base,
+            output_mount_root=self.base,
+        )
+        with self.assertRaisesRegex(ValueError, 'must not overlap any source media mount'):
+            overlapping_mounts._library_dir('movies', 'media-id')
 
     def test_ranked_movie_symlink_has_badged_poster_and_never_copies_media(self):
         emby = FakeEmby()

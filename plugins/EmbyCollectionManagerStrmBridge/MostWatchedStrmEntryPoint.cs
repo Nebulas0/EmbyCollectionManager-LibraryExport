@@ -18,6 +18,7 @@ using MediaBrowser.Controller.Providers;
 using MediaBrowser.Model.Entities;
 using MediaBrowser.Model.IO;
 using MediaBrowser.Model.Logging;
+using MediaBrowser.Model.Querying;
 using MediaBrowser.Model.Tasks;
 using MediaBrowser.Model.Users;
 
@@ -475,7 +476,7 @@ namespace EmbyCollectionManagerStrmBridge
                 var users = library.Kind == "movies"
                     ? config.MovieHomeSectionUserIds
                     : config.TvHomeSectionUserIds;
-                foreach (var userId in users ?? new List<string>())
+                foreach (var userId in ResolveConfiguredUsers(users))
                 {
                     if (string.IsNullOrWhiteSpace(userId))
                         continue;
@@ -525,6 +526,20 @@ namespace EmbyCollectionManagerStrmBridge
 
             SyncHomeSectionExclusions(config, desired);
             plugin?.SaveConfiguration();
+        }
+
+        private List<string> ResolveConfiguredUsers(List<string> configuredUsers)
+        {
+            configuredUsers = configuredUsers ?? new List<string>();
+            if (!configuredUsers.Any(user => string.Equals(user, "*", StringComparison.Ordinal)))
+                return configuredUsers.Where(user => !string.IsNullOrWhiteSpace(user)).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+
+            return (_userManager.GetUsers(new UserQuery(), CancellationToken.None)?.Items ?? Array.Empty<User>())
+                .Select(user => Convert.ToString(user.Id))
+                .Where(userId => !string.IsNullOrWhiteSpace(userId))
+                .Select(userId => userId!)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
         }
 
         private void SyncHomeSection(PluginConfiguration config, DesiredHomeSection wanted)
@@ -860,6 +875,13 @@ namespace EmbyCollectionManagerStrmBridge
                                 ? "tv_shows" : string.Empty;
                     }
                     if (kind != "movies" && kind != "tv_shows")
+                        continue;
+                    var config = Plugin.Instance?.Configuration;
+                    var selectedLibraryId = kind == "movies"
+                        ? config?.MovieHomeSectionLibraryId
+                        : config?.TvHomeSectionLibraryId;
+                    if (!string.IsNullOrEmpty(selectedLibraryId) &&
+                        !string.Equals(selectedLibraryId, libraryId, StringComparison.OrdinalIgnoreCase))
                         continue;
                     result.Add(new ManagedLibrary
                     {

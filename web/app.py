@@ -25,6 +25,8 @@ from src.library_export import (
     DEFAULT_MEDIA_ROOT,
     DEFAULT_OUTPUT_ROOT,
     MANIFEST_NAME,
+    MEDIA_MOUNT_ROOTS,
+    OUTPUT_MOUNT_ROOT,
     CollectionLibraryExporter,
     validate_library_export_paths,
 )
@@ -211,46 +213,72 @@ def most_watched():
     config = load_config()
     settings = normalize_most_watched_settings(config.get('most_watched'))
     all_libraries = get_emby_libraries()
-    exports = config.get('library_exports') or {}
-    try:
-        output_root = Path(exports.get('output_root') or DEFAULT_OUTPUT_ROOT).resolve()
-    except (OSError, RuntimeError):
-        output_root = Path(DEFAULT_OUTPUT_ROOT).resolve()
+    output_mount_root = Path(OUTPUT_MOUNT_ROOT).resolve()
 
-    def is_managed_export_library(library):
+    def target_library_status(library):
         locations = library.get('Locations') or []
         if len(locations) != 1 or not isinstance(locations[0], str):
-            return False
+            return False, 'requires exactly one folder location'
         raw_location = Path(locations[0])
         if raw_location.is_symlink():
-            return False
+            return False, 'folder is a symlink'
         try:
             location = raw_location.resolve()
         except (OSError, RuntimeError):
-            return False
+            return False, 'folder path cannot be resolved'
+        for media_root in MEDIA_MOUNT_ROOTS:
+            root = Path(media_root).resolve()
+            try:
+                location.relative_to(root)
+                return False, 'folder overlaps a source media mount'
+            except ValueError:
+                try:
+                    root.relative_to(location)
+                    return False, 'folder overlaps a source media mount'
+                except ValueError:
+                    pass
         if (location / MANIFEST_NAME).is_file() and not (location / '.most-watched-manifest.json').is_file():
-            return False
+            return False, 'folder is already managed by a collection export'
         try:
-            location.relative_to(output_root)
-            return location != output_root
+            location.relative_to(output_mount_root)
+            return (location != output_mount_root), (
+                '' if location != output_mount_root else 'folder is the whole output mount'
+            )
         except ValueError:
+            return False, 'folder is outside the Manager writable output mount'
+
+    def target_library_options(collection_type):
+        options = []
+        for library in all_libraries:
+            if str(library.get('CollectionType', '')).lower() != collection_type:
+                continue
+            eligible, reason = target_library_status(library)
+            option = dict(library)
+            option['_target_eligible'] = eligible
+            option['_target_reason'] = reason
+            options.append(option)
+        return options
+
+    target_movie_libraries = target_library_options('movies')
+    target_tv_libraries = target_library_options('tvshows')
+
+    def _path_is_in_output_mount(value, root):
+        try:
+            path = Path(value).resolve()
+            path.relative_to(root)
+            return path != root
+        except (OSError, RuntimeError, ValueError):
             return False
 
-    target_movie_libraries = [
-        library for library in all_libraries
-        if str(library.get('CollectionType', '')).lower() == 'movies'
-        and is_managed_export_library(library)
-    ]
-    target_tv_libraries = [
-        library for library in all_libraries
-        if str(library.get('CollectionType', '')).lower() == 'tvshows'
-        and is_managed_export_library(library)
-    ]
     output_library_ids = {
         str(library.get('Id'))
         for library in all_libraries
         if library.get('Name') in {'Most Watched Movies-library', 'Most Watched TV Shows-library'}
-        or is_managed_export_library(library)
+        or any(
+            isinstance(location, str)
+            and _path_is_in_output_mount(location, output_mount_root)
+            for location in (library.get('Locations') or [])
+        )
     }
     available_libraries = [
         library for library in all_libraries
@@ -306,8 +334,14 @@ def most_watched():
             },
         }
         valid_target_ids = {
-            'movies': {str(library.get('Id')) for library in target_movie_libraries},
-            'tv_shows': {str(library.get('Id')) for library in target_tv_libraries},
+            'movies': {
+                str(library.get('Id')) for library in target_movie_libraries
+                if library.get('_target_eligible')
+            },
+            'tv_shows': {
+                str(library.get('Id')) for library in target_tv_libraries
+                if library.get('_target_eligible')
+            },
         }
         invalid_selection = any(
             section['enabled'] and (
@@ -325,7 +359,7 @@ def most_watched():
             for section in settings.values()
         )
         if invalid_selection:
-            error = 'Choose valid source libraries and an existing output library folder inside the configured export root.'
+            error = 'Choose valid source libraries and an existing output library folder inside the writable export mount.'
         else:
             most_watched_config = config.get('most_watched')
             most_watched_config = dict(most_watched_config) if isinstance(most_watched_config, dict) else {}
@@ -361,6 +395,8 @@ def most_watched():
         tv_libraries=tv_libraries,
         target_movie_libraries=target_movie_libraries,
         target_tv_libraries=target_tv_libraries,
+        has_target_movie_libraries=any(library.get('_target_eligible') for library in target_movie_libraries),
+        has_target_tv_libraries=any(library.get('_target_eligible') for library in target_tv_libraries),
         plugin_available=plugin_available,
         plugin_message=plugin_message,
         auto_create_emby_library=most_watched_auto_create,
