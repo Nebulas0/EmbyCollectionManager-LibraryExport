@@ -4,10 +4,20 @@ define(['emby-input', 'emby-button', 'emby-select'], function () {
     var pluginId = '3d9e8cda-9217-4ca9-9353-8c89adda7789';
 
     function selectedValues(select) {
-        var selected = Array.from(select.selectedOptions).map(function (option) {
+        var selected = Array.from(select.options).filter(function (option) {
+            return option.selected;
+        }).map(function (option) {
             return option.value;
         });
         return selected.indexOf('*') >= 0 ? ['*'] : selected;
+    }
+
+    function sameValues(left, right) {
+        var a = (left || []).map(String).sort();
+        var b = (right || []).map(String).sort();
+        return a.length === b.length && a.every(function (value, index) {
+            return value === b[index];
+        });
     }
 
     function setSelectedValues(select, values) {
@@ -43,14 +53,14 @@ define(['emby-input', 'emby-button', 'emby-select'], function () {
                     option.textContent = user.Name || user.Id;
                     select.appendChild(option);
                 });
-                select.addEventListener('change', function () {
+                select.onchange = function () {
                     var all = select.options[0];
                     if (all.selected) {
                         Array.from(select.options).slice(1).forEach(function (option) {
                             option.selected = false;
                         });
                     }
-                });
+                };
             });
             setSelectedValues(view.querySelector('#mw-movie-users'), config.MovieHomeSectionUserIds);
             setSelectedValues(view.querySelector('#mw-tv-users'), config.TvHomeSectionUserIds);
@@ -111,25 +121,39 @@ define(['emby-input', 'emby-button', 'emby-select'], function () {
         var button = view.querySelector('#mw-save');
         var error = view.querySelector('#mw-config-error');
         var status = view.querySelector('#mw-config-status');
+        var movieUserIds = selectedValues(view.querySelector('#mw-movie-users'));
+        var tvUserIds = selectedValues(view.querySelector('#mw-tv-users'));
         button.disabled = true;
         error.textContent = '';
-        status.textContent = '';
+        status.textContent = 'Saving HomeScreen users: Movies ' + movieUserIds.length +
+            ', TV Shows ' + tvUserIds.length + '.';
+        console.info('[Emby Collection Manager] Saving HomeScreen user selections', {
+            MovieHomeSectionUserIds: movieUserIds,
+            TvHomeSectionUserIds: tvUserIds
+        });
 
         window.ApiClient.getPluginConfiguration(pluginId).then(function (config) {
             config = config || {};
             config.MovieHomeSectionLibraryId = view.querySelector('#mw-movie-library').value;
             config.TvHomeSectionLibraryId = view.querySelector('#mw-tv-library').value;
-            config.MovieHomeSectionUserIds = selectedValues(view.querySelector('#mw-movie-users'));
-            config.TvHomeSectionUserIds = selectedValues(view.querySelector('#mw-tv-users'));
+            config.MovieHomeSectionUserIds = movieUserIds;
+            config.TvHomeSectionUserIds = tvUserIds;
             config.MovieHomeSectionImageType = view.querySelector('#mw-movie-image').value;
             config.TvHomeSectionImageType = view.querySelector('#mw-tv-image').value;
             config.MovieHomeSectionSortBy = view.querySelector('#mw-movie-sort').value;
             config.TvHomeSectionSortBy = view.querySelector('#mw-tv-sort').value;
             config.MovieHomeSectionSortOrder = view.querySelector('#mw-movie-order').value;
             config.TvHomeSectionSortOrder = view.querySelector('#mw-tv-order').value;
-            return window.ApiClient.updatePluginConfiguration(pluginId, config);
-        }).then(function () {
-            status.textContent = 'Saved. The bridge is synchronizing the selected HomeScreen sections; status will update when you reopen this page.';
+            return window.ApiClient.updatePluginConfiguration(pluginId, config).then(function (response) {
+                console.debug('[Emby Collection Manager] Plugin configuration update response', response);
+                return window.ApiClient.getPluginConfiguration(pluginId);
+            });
+        }).then(function (saved) {
+            if (!sameValues(saved.MovieHomeSectionUserIds, movieUserIds) ||
+                !sameValues(saved.TvHomeSectionUserIds, tvUserIds)) {
+                throw new Error('Emby accepted the request but did not return the selected HomeScreen user IDs. Check the plugin configuration file and browser request payload.');
+            }
+            status.textContent = 'Saved and verified. The bridge is synchronizing the selected HomeScreen sections.';
         }).catch(function (saveError) {
             error.textContent = 'Could not save plugin settings: ' + (saveError.message || saveError);
         }).finally(function () {

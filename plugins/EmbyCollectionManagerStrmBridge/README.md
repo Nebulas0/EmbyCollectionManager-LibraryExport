@@ -2,7 +2,7 @@
 
 The Emby-side bridge handles Manager-owned Most Watched STRM and symlink exports. It applies rank Sort Names and local images to distinct indexed copies, copies source runtime/stream metadata to STRM episodes, and queues Emby's remote-content probe for STRM movies. It also creates a dedicated per-user HomeScreen section for each active Most Watched output library.
 
-The HomeScreen section defaults to `SortName` ascending. In the plugin's **Most Watched HomeScreen** page, select the same Movies/TV library chosen in the Manager, choose specific users or **All users**, and set `Primary`/Poster or `Thumb`/Landscape per media type. The page reports whether an active Manager manifest is detected for the selected library. Enable the corresponding generated image file on the Manager's `/most-watched` page as well. Auto-detect follows the active `.most-watched-manifest.json`. The bridge excludes only that target library from the selected users' other HomeScreen sections, preserving those sections' sort settings and all other libraries.
+The HomeScreen section defaults to `SortName` ascending. In the plugin's **Most Watched HomeScreen** page, select the same Movies/TV library chosen in the Manager, choose specific users or **All users**, and set `Primary`/Poster or `Thumb`/Landscape per media type. The page reports whether an active Manager manifest is detected for the selected library. Enable the corresponding generated image file on the Manager's `/most-watched` page as well. Auto-detect follows the active `.most-watched-manifest.json`. Save displays the selected user counts and verifies the user IDs returned by Emby. The bridge excludes only that target library from the selected users' other HomeScreen sections, preserving those sections' sort settings and all other libraries.
 
 For symlink output, Emby must index a distinct item under the manager-owned path. If Emby resolves it back to the original item, the bridge deliberately skips modifying its Sort Name or image references to avoid changing source-library metadata/artwork. `.strm` remains the reliable isolated-copy mode in that case. The plugin never modifies source media files.
 
@@ -16,3 +16,10 @@ dotnet build EmbyCollectionManagerStrmBridge.csproj -c Release \
 ```
 
 The resulting DLL is in `bin/Release/netstandard2.0/`. Install it in Emby's plugin directory and restart Emby to load it. The source uses Emby's in-process plugin APIs because the public REST refresh endpoint does not expose the remote-content-probe option used for `.strm` playback.
+
+Run the no-package XML persistence regression check (including a specific user ID and the `*` All-users marker) with:
+
+```bash
+dotnet run --project ../EmbyCollectionManagerStrmBridge.Tests/EmbyCollectionManagerStrmBridge.Tests.csproj \
+  -c Release -p:EmbyServerPath=/path/to/Emby/system
+```

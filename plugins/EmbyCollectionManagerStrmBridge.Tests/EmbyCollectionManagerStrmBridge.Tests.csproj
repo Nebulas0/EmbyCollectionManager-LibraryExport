@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../EmbyCollectionManagerStrmBridge/EmbyCollectionManagerStrmBridge.csproj" />
+    <Reference Include="MediaBrowser.Common">
+      <HintPath>$(EmbyServerPath)/MediaBrowser.Common.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
+    <Reference Include="MediaBrowser.Controller">
+      <HintPath>$(EmbyServerPath)/MediaBrowser.Controller.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
+    <Reference Include="MediaBrowser.Model">
+      <HintPath>$(EmbyServerPath)/MediaBrowser.Model.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
+  </ItemGroup>
+</Project>
