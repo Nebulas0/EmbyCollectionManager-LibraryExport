@@ -632,6 +632,7 @@ class MostWatchedLibraryExporter:
         kind: str,
         library_id: Optional[str],
         active: bool,
+        limit: int,
     ) -> bool:
         manifest_path = library_dir / MostWatchedLibraryExporter._manifest_name
         if manifest_path.is_symlink() or not manifest_path.is_file():
@@ -643,15 +644,18 @@ class MostWatchedLibraryExporter:
             return False
         if not isinstance(manifest, dict):
             return False
+        configured_limit = max(1, min(int(limit), 100))
         if (
             manifest.get('kind') == kind
             and manifest.get('library_id') == library_id
             and manifest.get('active', True) == active
+            and manifest.get('limit') == configured_limit
         ):
             return False
         manifest['kind'] = kind
         manifest['library_id'] = library_id
         manifest['active'] = active
+        manifest['limit'] = configured_limit
         with tempfile.NamedTemporaryFile(
             mode='w',
             encoding='utf-8',
@@ -963,7 +967,10 @@ class MostWatchedLibraryExporter:
         badge_style: str = 'neutral',
         target_library_id: Optional[str] = None,
         active: bool = True,
+        limit: int = 10,
     ) -> Dict[str, Any]:
+        limit = max(1, min(int(limit), 100))
+        ranked_items = ranked_items[:limit]
         output_mode = str(output_mode).lower()
         if output_mode not in MOST_WATCHED_OUTPUT_MODES:
             raise ValueError(f'Unsupported Most Watched output mode: {output_mode}')
@@ -1005,7 +1012,7 @@ class MostWatchedLibraryExporter:
             library_id, created = library_info
         else:
             library_id = self._find_library_id(library_name, library_dir)
-        manifest_changed = self._set_manifest_library(library_dir, kind, library_id, active)
+        manifest_changed = self._set_manifest_library(library_dir, kind, library_id, active, limit)
         self._deactivate_other_manifests(kind, library_dir if active else None)
         changed = changed or manifest_changed
         if changed and library_id and not created:
@@ -1020,6 +1027,7 @@ class MostWatchedLibraryExporter:
             'library_path': str(library_dir),
             'library_id': library_id,
             'item_count': len(ranked_items),
+            'limit': limit,
             'changed': changed,
         }
 
@@ -1214,6 +1222,7 @@ def sync_most_watched(emby_client, config: Dict[str, Any], state_dir: str) -> Di
                 create_emby_library=False,
                 target_library_id=section.get('target_library_id'),
                 active=False,
+                limit=section['limit'],
             )
             output_key = 'tv_shows' if kind == 'tv_shows' else 'movies'
             state[output_key] = []
@@ -1261,6 +1270,7 @@ def sync_most_watched(emby_client, config: Dict[str, Any], state_dir: str) -> Di
                 image_variants=section['image_variants'],
                 badge_style=section['badge_style'],
                 target_library_id=section.get('target_library_id'),
+                limit=section['limit'],
             )
             state[output_key] = [
                 {

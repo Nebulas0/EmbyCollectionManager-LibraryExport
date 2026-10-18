@@ -420,6 +420,9 @@ namespace EmbyCollectionManagerStrmBridge
             [DataMember(Name = "active")]
             public bool? Active { get; set; }
 
+            [DataMember(Name = "limit")]
+            public int? Limit { get; set; }
+
             [DataMember(Name = "links")]
             public Dictionary<string, string>? Links { get; set; }
         }
@@ -510,7 +513,8 @@ namespace EmbyCollectionManagerStrmBridge
                         UserId = userId,
                         LibraryId = library.Id,
                         Kind = library.Kind,
-                        LibraryName = library.Name
+                        LibraryName = library.Name,
+                        Limit = library.Limit
                     });
                 }
             }
@@ -614,14 +618,16 @@ namespace EmbyCollectionManagerStrmBridge
             var tracked = config.ManagedHomeSections.FirstOrDefault(entry =>
                 string.Equals(entry.UserId, wanted.UserId, StringComparison.OrdinalIgnoreCase) &&
                 string.Equals(entry.Kind, wanted.Kind, StringComparison.OrdinalIgnoreCase));
-            var displayName = wanted.Kind == "movies"
-                ? HomeSectionPrefix + "Movies"
-                : HomeSectionPrefix + "TV Shows";
+            var displayName = wanted.LibraryName;
             var existing = tracked == null
                 ? null
                 : currentSections.FirstOrDefault(section => GetStringProperty(section, "Id") == tracked.SectionId);
+            var legacyName = wanted.Kind == "movies"
+                ? HomeSectionPrefix + "Movies"
+                : HomeSectionPrefix + "TV Shows";
             existing = existing ?? currentSections.FirstOrDefault(section =>
-                string.Equals(GetStringProperty(section, "CustomName"), displayName, StringComparison.OrdinalIgnoreCase));
+                string.Equals(GetStringProperty(section, "ParentId"), wanted.LibraryId, StringComparison.OrdinalIgnoreCase) &&
+                string.Equals(GetStringProperty(section, "CustomName"), legacyName, StringComparison.OrdinalIgnoreCase));
 
             var updated = BuildHomeSection(config, wanted, displayName, existing);
             if (existing != null)
@@ -871,37 +877,33 @@ namespace EmbyCollectionManagerStrmBridge
             return false;
         }
 
-        private static ContentSection BuildHomeSection(
+        private ContentSection BuildHomeSection(
             PluginConfiguration config,
             DesiredHomeSection wanted,
             string displayName,
             ContentSection existing)
         {
-            var section = existing ?? new ContentSection();
-            SetProperty(section, "SectionType", "items");
-            SetProperty(section, "ParentId", wanted.LibraryId);
-            SetProperty(section, "CustomName", displayName);
-            SetProperty(section, "ItemTypes", new[] { wanted.Kind == "movies" ? "Movie" : "Series" });
-            SetProperty(section, "SortBy", wanted.Kind == "movies"
-                ? config.MovieHomeSectionSortBy : config.TvHomeSectionSortBy);
-            SetProperty(section, "SortOrder", wanted.Kind == "movies"
-                ? config.MovieHomeSectionSortOrder : config.TvHomeSectionSortOrder);
-            SetProperty(section, "ImageType", wanted.Kind == "movies"
-                ? config.MovieHomeSectionImageType : config.TvHomeSectionImageType);
-            SetProperty(section, "MaxItems", 100);
+            return HomeSectionBuilder.Build(
+                wanted.LibraryId,
+                displayName,
+                wanted.Kind,
+                wanted.Kind == "movies" ? config.MovieHomeSectionSortBy : config.TvHomeSectionSortBy,
+                wanted.Kind == "movies" ? config.MovieHomeSectionSortOrder : config.TvHomeSectionSortOrder,
+                wanted.Kind == "movies" ? config.MovieHomeSectionImageType : config.TvHomeSectionImageType,
+                wanted.Limit,
+                GetLibraryViewIds(),
+                existing);
+        }
 
-            var queryProperty = typeof(ContentSection).GetProperty("Query", BindingFlags.Public | BindingFlags.Instance);
-            if (queryProperty != null && queryProperty.CanWrite && queryProperty.GetValue(section, null) == null)
-            {
-                try
-                {
-                    queryProperty.SetValue(section, Activator.CreateInstance(queryProperty.PropertyType), null);
-                }
-                catch
-                {
-                }
-            }
-            return section;
+        private IEnumerable<string> GetLibraryViewIds()
+        {
+            var folders = _libraryManager.GetVirtualFolders();
+            if (folders == null)
+                return Array.Empty<string>();
+            return folders
+                .Select(folder => Convert.ToString(GetProperty(folder, "ItemId")))
+                .Where(id => !string.IsNullOrWhiteSpace(id))
+                .Select(id => id!);
         }
 
         private List<ManagedLibrary> GetManagedLibraries()
@@ -944,7 +946,8 @@ namespace EmbyCollectionManagerStrmBridge
                     {
                         Id = libraryId ?? string.Empty,
                         Name = name,
-                        Kind = kind
+                        Kind = kind,
+                        Limit = Math.Max(1, Math.Min(manifest.Limit ?? 10, 100))
                     });
                 }
             }
@@ -1020,6 +1023,7 @@ namespace EmbyCollectionManagerStrmBridge
             public string Id { get; set; } = string.Empty;
             public string Name { get; set; } = string.Empty;
             public string Kind { get; set; } = string.Empty;
+            public int Limit { get; set; } = 10;
         }
 
         private sealed class DesiredHomeSection
@@ -1028,6 +1032,7 @@ namespace EmbyCollectionManagerStrmBridge
             public string LibraryId { get; set; } = string.Empty;
             public string LibraryName { get; set; } = string.Empty;
             public string Kind { get; set; } = string.Empty;
+            public int Limit { get; set; } = 10;
         }
 
         public void Dispose()

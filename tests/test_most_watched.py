@@ -266,6 +266,7 @@ class PlaybackReportingClientTests(unittest.TestCase):
             'image_variants': ['poster', 'thumb'],
             'badge_style': 'neutral',
             'target_library_id': None,
+            'limit': 1,
         })
         self.assertEqual(state['movies'][0]['plays'], 8)
         self.assertEqual(saved['movies'][0]['rank'], 1)
@@ -359,6 +360,7 @@ class MostWatchedLibraryExporterTests(unittest.TestCase):
             [{'item': item, 'name': item['Name'], 'plays': 3, 'watch_seconds': 1000}],
             create_emby_library=True,
             target_library_id='top-movies-id',
+            limit=5,
         )
 
         self.assertEqual(result['library_name'], 'Top Played Movies')
@@ -370,6 +372,8 @@ class MostWatchedLibraryExporterTests(unittest.TestCase):
         manifest = json.loads((target_dir / '.most-watched-manifest.json').read_text())
         self.assertEqual(manifest['kind'], 'movies')
         self.assertEqual(manifest['library_id'], 'top-movies-id')
+        self.assertEqual(manifest['limit'], 5)
+        self.assertEqual(result['limit'], 5)
 
     def test_selected_output_library_must_be_inside_writable_export_mount(self):
         emby = FakeEmby()
@@ -382,6 +386,38 @@ class MostWatchedLibraryExporterTests(unittest.TestCase):
 
         with self.assertRaisesRegex(ValueError, 'inside the writable export mount'):
             self.make_exporter(emby)._library_dir('movies', 'unsafe-id')
+
+    def test_exporter_enforces_and_persists_configured_limit(self):
+        emby = FakeEmby()
+        exporter = self.make_exporter(emby)
+        ranked = []
+        for index in range(12):
+            movie_dir = self.media_root / 'movies' / f'Movie {index:02d} (2024)'
+            movie_dir.mkdir(parents=True)
+            movie_path = movie_dir / f'Movie {index:02d}.mkv'
+            movie_path.write_bytes(b'movie')
+            item = {
+                'Id': f'movie-{index}',
+                'Type': 'Movie',
+                'Name': f'Movie {index:02d}',
+                'ProductionYear': 2024,
+                'Path': str(movie_path),
+                'ProviderIds': {'Imdb': f'tt{index:07d}'},
+            }
+            ranked.append({'item': item, 'name': item['Name'], 'plays': 12 - index, 'watch_seconds': 100})
+
+        result = exporter.sync(
+            'movies',
+            ranked,
+            create_emby_library=False,
+            limit=10,
+        )
+
+        output = Path(result['library_path'])
+        self.assertEqual(result['item_count'], 10)
+        self.assertEqual(len(list(output.rglob('*.mkv'))), 10)
+        manifest = json.loads((output / '.most-watched-manifest.json').read_text())
+        self.assertEqual(manifest['limit'], 10)
 
     def test_selected_output_library_must_not_overlap_source_media_mount(self):
         emby = FakeEmby()
