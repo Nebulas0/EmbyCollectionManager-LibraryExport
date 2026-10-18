@@ -237,7 +237,7 @@ def most_watched():
                     return False, 'folder overlaps a source media mount'
                 except ValueError:
                     pass
-        if (location / MANIFEST_NAME).is_file() and not (location / '.most-watched-manifest.json').is_file():
+        if (location / MANIFEST_NAME).is_file():
             return False, 'folder is already managed by a collection export'
         try:
             location.relative_to(output_mount_root)

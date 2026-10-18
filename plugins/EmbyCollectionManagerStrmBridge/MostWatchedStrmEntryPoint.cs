@@ -534,7 +534,7 @@ namespace EmbyCollectionManagerStrmBridge
             if (!configuredUsers.Any(user => string.Equals(user, "*", StringComparison.Ordinal)))
                 return configuredUsers.Where(user => !string.IsNullOrWhiteSpace(user)).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
 
-            return (_userManager.GetUsers(new UserQuery(), CancellationToken.None)?.Items ?? Array.Empty<User>())
+            return (_userManager.GetUsers(new UserQuery { Limit = 10000 }, CancellationToken.None)?.Items ?? Array.Empty<User>())
                 .Select(user => Convert.ToString(user.Id))
                 .Where(userId => !string.IsNullOrWhiteSpace(userId))
                 .Select(userId => userId!)

@@ -15,6 +15,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from .library_export import (
     DEFAULT_MEDIA_ROOT,
     DEFAULT_OUTPUT_ROOT,
+    MANIFEST_NAME,
     MEDIA_MOUNT_ROOTS,
     OUTPUT_MOUNT_ROOT,
     validate_library_export_paths,
@@ -612,6 +613,8 @@ class MostWatchedLibraryExporter:
                 )
             if overlaps_media:
                 raise ValueError('The selected target library folder must not overlap any source media mount')
+            if (library_dir / MANIFEST_NAME).is_file():
+                raise ValueError('The selected target library folder is already managed by a collection export')
             if library_dir.exists() and not library_dir.is_dir():
                 raise ValueError('The selected target library location is not a directory')
             return str(target.get('Name') or library_name), collection_type, library_dir, str(target_library_id)
@@ -629,17 +632,23 @@ class MostWatchedLibraryExporter:
         kind: str,
         library_id: Optional[str],
         active: bool,
-    ) -> None:
+    ) -> bool:
         manifest_path = library_dir / MostWatchedLibraryExporter._manifest_name
         if manifest_path.is_symlink() or not manifest_path.is_file():
-            return
+            return False
         try:
             manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
         except (OSError, ValueError) as exc:
             logger.warning("Could not add target-library metadata to Most Watched manifest %s: %s", manifest_path, exc)
-            return
+            return False
         if not isinstance(manifest, dict):
-            return
+            return False
+        if (
+            manifest.get('kind') == kind
+            and manifest.get('library_id') == library_id
+            and manifest.get('active', True) == active
+        ):
+            return False
         manifest['kind'] = kind
         manifest['library_id'] = library_id
         manifest['active'] = active
@@ -654,6 +663,7 @@ class MostWatchedLibraryExporter:
             os.fchmod(staged.fileno(), 0o644)
             staged_path = Path(staged.name)
         os.replace(staged_path, manifest_path)
+        return True
 
     def _deactivate_other_manifests(self, kind: str, active_library_dir: Optional[Path]) -> None:
         active_key = (
@@ -995,8 +1005,9 @@ class MostWatchedLibraryExporter:
             library_id, created = library_info
         else:
             library_id = self._find_library_id(library_name, library_dir)
-        self._set_manifest_library(library_dir, kind, library_id, active)
+        manifest_changed = self._set_manifest_library(library_dir, kind, library_id, active)
         self._deactivate_other_manifests(kind, library_dir if active else None)
+        changed = changed or manifest_changed
         if changed and library_id and not created:
             self.emby.refresh_library(library_id)
         elif changed:
