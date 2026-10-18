@@ -4,6 +4,7 @@ from unittest.mock import patch
 from src.app_logic import (
     _apply_collection_sorting,
     _expire_seasonal_collection,
+    _remove_managed_collection,
     _should_generate_list_backdrop,
     _sync_collection,
     _sync_library_export,
@@ -138,6 +139,22 @@ class SyncCollectionTests(unittest.TestCase):
 
         self.assertEqual(emby.deleted, 'box-id')
         sync_export.assert_called_once_with(emby, None, 'Halloween', {}, False)
+
+    def test_deselected_managed_collection_removes_boxset_and_owned_export(self):
+        class ManagedEmby:
+            def get_collection_id(self, name):
+                return 'box-id'
+
+            def delete_collection(self, collection_id):
+                self.deleted = collection_id
+                return True
+
+        emby = ManagedEmby()
+        with patch('src.app_logic._sync_library_export', return_value=True) as sync_export:
+            self.assertTrue(_remove_managed_collection(emby, 'Seasonal Picks', {}))
+
+        self.assertEqual(emby.deleted, 'box-id')
+        sync_export.assert_called_once_with(emby, None, 'Seasonal Picks', {}, False)
 
     def test_all_emby_collections_get_outer_and_inner_sort_preferences(self):
         class CollectionListEmby:

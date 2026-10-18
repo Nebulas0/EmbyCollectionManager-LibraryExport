@@ -78,6 +78,8 @@ For a main server using `/mnt/unionfs`, set both `LIBRARY_EXPORT_MEDIA_MOUNTS` a
 
 When items disappear from a collection, the next sync removes only the corresponding manager-owned symlinks. Turning off a collection’s export also clears its managed links on the next sync; the Emby library entry itself is left in place.
 
+Unchecking a built-in recipe queues its matching Emby BoxSet and manager-owned export for removal on the next full sync. Deleting a Trakt/MDBList file does the same. The manager keeps the collection if another enabled recipe/list still uses the same collection name, and never deletes an Emby library entry or source media.
+
 ## Trakt and MDBList list editor
 
 The Trakt Lists and MDBLists tabs share a single edit dialog for list content, collection name, per-list item limit, source libraries, symlink export, seasonal window, and poster/backdrop URLs. The standalone Libraries button is removed; choose source libraries in Edit instead. These options are stored per list and applied on the next sync. A per-list item limit overrides the global limit; `0` means unlimited and a blank value uses the global setting.

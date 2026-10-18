@@ -111,6 +111,149 @@ def save_state(state):
         logger.error(f"Failed to save state: {e}")
 
 
+def _recipe_collection_names(recipe_name):
+    names = {str(recipe_name)} if recipe_name else set()
+    try:
+        from src.recipe_override import RecipeOverrideManager
+        manager = RecipeOverrideManager(BASE_DIR)
+        overrides = manager.get_all_overrides()
+        duplicates = manager.get_duplicates()
+        for name in list(names):
+            custom_name = (overrides.get(name) or {}).get('custom_name')
+            if custom_name:
+                names.add(str(custom_name))
+        for duplicate in duplicates:
+            if duplicate.get('original_name') != recipe_name:
+                continue
+            duplicate_name = duplicate.get('new_name')
+            if duplicate_name:
+                names.add(str(duplicate_name))
+                duplicate_custom = (overrides.get(str(duplicate_name)) or {}).get('custom_name')
+                if duplicate_custom:
+                    names.add(str(duplicate_custom))
+    except Exception as exc:
+        logger.warning("Could not resolve collection names for recipe '%s': %s", recipe_name, exc)
+    return {name.strip() for name in names if name and name.strip()}
+
+
+def _queue_collection_cleanup(state, collection_names):
+    pending = set(state.get('pending_collection_cleanup') or [])
+    pending.update(str(name).strip() for name in collection_names if name and str(name).strip())
+    state['pending_collection_cleanup'] = sorted(pending, key=str.casefold)
+
+
+def _discard_collection_cleanup(state, collection_names):
+    discarded = {str(name).casefold() for name in collection_names if name}
+    state['pending_collection_cleanup'] = [
+        name for name in (state.get('pending_collection_cleanup') or [])
+        if str(name).casefold() not in discarded
+    ]
+
+
+def _list_collection_name(list_type, file_path, metadata_manager):
+    metadata = metadata_manager.get_list_config(list_type, file_path.name)
+    if isinstance(metadata, dict) and metadata.get('collection_name'):
+        return str(metadata['collection_name'])
+
+    try:
+        content = file_path.read_text(encoding='utf-8')
+        if file_path.suffix.lower() in {'.yaml', '.yml'}:
+            parsed = yaml.safe_load(content)
+        elif content.strip().startswith('---') and '\n---\n' in content:
+            frontmatter = content.split('\n---\n', 1)[0].strip().lstrip('-').strip()
+            parsed = yaml.safe_load(frontmatter)
+        else:
+            parsed = None
+        if isinstance(parsed, dict) and parsed.get('collection_name'):
+            return str(parsed['collection_name'])
+    except (OSError, yaml.YAMLError):
+        pass
+    return file_path.stem
+
+
+def _active_collection_names(state, config, recipes):
+    active_names = set()
+    recipe_names = {recipe.get('name') for recipe in recipes if recipe.get('name')}
+    enabled = state.get('enabled_recipes')
+    enabled_names = recipe_names if enabled is None else set(enabled)
+    try:
+        from src.recipe_override import RecipeOverrideManager
+        manager = RecipeOverrideManager(BASE_DIR)
+        overrides = manager.get_all_overrides()
+        for recipe in recipes:
+            name = recipe.get('name')
+            if name not in enabled_names:
+                continue
+            custom_name = (overrides.get(name) or {}).get('custom_name')
+            active_names.add(str(custom_name or name).casefold())
+        for duplicate in manager.get_duplicates():
+            if duplicate.get('original_name') not in enabled_names:
+                continue
+            duplicate_name = duplicate.get('new_name')
+            if duplicate_name:
+                custom_name = (overrides.get(str(duplicate_name)) or {}).get('custom_name')
+                active_names.add(str(custom_name or duplicate_name).casefold())
+    except Exception as exc:
+        logger.warning("Could not resolve active recipe collection names: %s", exc)
+
+    try:
+        from src.list_metadata import ListMetadataManager
+        metadata_manager = ListMetadataManager(BASE_DIR)
+        for list_type in ('traktlists', 'mdblists'):
+            directory = (config.get(list_type) or {}).get('directory', list_type)
+            path = Path(directory)
+            if not path.is_absolute():
+                path = Path(BASE_DIR) / path
+            if not path.is_dir():
+                continue
+            for file_path in path.iterdir():
+                if file_path.is_file() and file_path.suffix.lower() in {'.txt', '.yaml', '.yml'}:
+                    active_names.add(_list_collection_name(list_type, file_path, metadata_manager).casefold())
+    except Exception as exc:
+        logger.warning("Could not enumerate active list collection names: %s", exc)
+    return active_names
+
+
+def _cleanup_pending_collections(state, config, recipes):
+    pending = list(dict.fromkeys(state.get('pending_collection_cleanup') or []))
+    if not pending:
+        return
+
+    active_names = _active_collection_names(state, config, recipes)
+    try:
+        emby_config = config.get('emby') or {}
+        if not emby_config.get('server_url') or not emby_config.get('api_key'):
+            logger.warning("Skipping deselected collection cleanup: Emby is not configured")
+            return
+        from src.emby_client import EmbyClient
+        from src.app_logic import _remove_managed_collection
+        emby = EmbyClient(
+            server_url=emby_config['server_url'],
+            api_key=emby_config['api_key'],
+            user_id=emby_config.get('user_id', ''),
+            config=config,
+        )
+    except Exception as exc:
+        logger.warning("Could not initialize Emby for deselected collection cleanup: %s", exc)
+        return
+
+    completed = set()
+    for collection_name in pending:
+        if collection_name.casefold() in active_names:
+            completed.add(collection_name)
+            continue
+        try:
+            if _remove_managed_collection(emby, collection_name, config):
+                logger.info("Removed deselected managed collection '%s'", collection_name)
+                completed.add(collection_name)
+        except Exception as exc:
+            logger.warning("Could not remove deselected managed collection '%s': %s", collection_name, exc)
+
+    if completed:
+        _discard_collection_cleanup(state, completed)
+        save_state(state)
+
+
 def get_enabled_recipes():
     state = load_state()
     enabled = state.get('enabled_recipes', None)
@@ -164,6 +307,15 @@ def run_sync_background():
         state = load_state()
         enabled = state.get('enabled_recipes', None)
         original_recipes = app_logic_module.RECIPES
+        if not state.get('collection_cleanup_initialized'):
+            if enabled is not None:
+                enabled_names = set(enabled)
+                for recipe in original_recipes:
+                    recipe_name = recipe.get('name')
+                    if recipe_name and recipe_name not in enabled_names:
+                        _queue_collection_cleanup(state, _recipe_collection_names(recipe_name))
+            state['collection_cleanup_initialized'] = True
+            save_state(state)
         if enabled is not None:
             app_logic_module.RECIPES = [r for r in original_recipes if r.get('name') in enabled]
         old_argv = sys.argv
@@ -173,6 +325,7 @@ def run_sync_background():
         finally:
             sys.argv = old_argv
             app_logic_module.RECIPES = original_recipes
+        _cleanup_pending_collections(load_state(), load_config(), original_recipes)
         sync_state['last_status'] = 'success'
     except Exception as e:
         sync_state['last_status'] = 'error'
@@ -535,10 +688,13 @@ def toggle_recipe():
         return jsonify({'error': 'No recipe name'}), 400
     state = load_state()
     cur = set(get_enabled_recipes())
+    cleanup_names = _recipe_collection_names(name)
     if enabled:
         cur.add(name)
+        _discard_collection_cleanup(state, cleanup_names)
     else:
         cur.discard(name)
+        _queue_collection_cleanup(state, cleanup_names)
     state['enabled_recipes'] = list(cur)
     save_state(state)
     return jsonify({'success': True, 'enabled_count': len(cur)})
@@ -549,10 +705,22 @@ def toggle_all():
     data = request.json
     enable = data.get('enable', True)
     state = load_state()
+    all_recipe_names = {
+        name
+        for recipe in RECIPES
+        if (name := recipe.get('name'))
+    }
+    cleanup_names = {
+        collection_name
+        for recipe_name in all_recipe_names
+        for collection_name in _recipe_collection_names(recipe_name)
+    }
     if enable:
-        state['enabled_recipes'] = [r['name'] for r in RECIPES if 'name' in r]
+        state['enabled_recipes'] = sorted(all_recipe_names)
+        _discard_collection_cleanup(state, cleanup_names)
     else:
         state['enabled_recipes'] = []
+        _queue_collection_cleanup(state, cleanup_names)
     save_state(state)
     return jsonify({'success': True, 'enabled_count': len(state['enabled_recipes'])})
 
@@ -566,12 +734,18 @@ def toggle_category():
         return jsonify({'error': 'No category_id'}), 400
     state = load_state()
     cur = set(get_enabled_recipes())
+    cleanup_names = set()
     for r in RECIPES:
         if r.get('category_id') == cat_id and 'name' in r:
+            cleanup_names.update(_recipe_collection_names(r['name']))
             if enabled:
                 cur.add(r['name'])
             else:
                 cur.discard(r['name'])
+    if enabled:
+        _discard_collection_cleanup(state, cleanup_names)
+    else:
+        _queue_collection_cleanup(state, cleanup_names)
     state['enabled_recipes'] = list(cur)
     save_state(state)
     return jsonify({'success': True, 'enabled_count': len(cur)})
@@ -1223,6 +1397,9 @@ def _remove_list_library_export(list_type, filename, file_content=''):
                 except yaml.YAMLError:
                     pass
         collection_name = collection_name or Path(filename).stem
+        state = load_state()
+        _queue_collection_cleanup(state, [collection_name])
+        save_state(state)
         emby_config = config.get('emby', {})
         if emby_config.get('server_url') and emby_config.get('api_key'):
             emby = EmbyClient(

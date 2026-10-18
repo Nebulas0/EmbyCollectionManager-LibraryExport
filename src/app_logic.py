@@ -787,19 +787,25 @@ def _sync_collection(
         return None
 
 
-def _expire_seasonal_collection(emby, collection_name, config):
+def _remove_managed_collection(emby, collection_name, config):
     try:
         collection_id = emby.get_collection_id(collection_name)
     except Exception as exc:
-        logger.warning("Could not verify seasonal collection '%s': %s", collection_name, exc)
+        logger.warning("Could not verify managed collection '%s': %s", collection_name, exc)
         return False
 
     if collection_id and not emby.delete_collection(collection_id):
-        logger.warning("Seasonal collection '%s' could not be safely removed", collection_name)
+        logger.warning("Managed collection '%s' could not be safely removed", collection_name)
         return False
 
-    _sync_library_export(emby, None, collection_name, config, False)
-    return True
+    return _sync_library_export(emby, None, collection_name, config, False)
+
+
+def _expire_seasonal_collection(emby, collection_name, config):
+    removed = _remove_managed_collection(emby, collection_name, config)
+    if not removed:
+        logger.warning("Seasonal collection '%s' could not be safely removed", collection_name)
+    return removed
 
 
 def _apply_collection_sorting(emby, seasonal_sort_names):

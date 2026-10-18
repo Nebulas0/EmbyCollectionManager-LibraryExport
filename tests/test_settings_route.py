@@ -257,6 +257,55 @@ class LibraryExportSettingsTests(unittest.TestCase):
         })
         self.assertEqual(invalid.status_code, 400)
 
+    def test_deselecting_recipe_queues_collection_cleanup_and_reselecting_cancels_it(self):
+        with patch.object(web_app, 'RECIPES', [{'name': 'Seasonal Picks', 'category_id': 1}]):
+            Path(web_app.STATE_PATH).write_text(
+                json.dumps({'enabled_recipes': ['Seasonal Picks']}),
+                encoding='utf-8',
+            )
+            response = self.client.post('/api/toggle_recipe', json={
+                'name': 'Seasonal Picks',
+                'enabled': False,
+            })
+            self.assertEqual(response.status_code, 200)
+            state = json.loads(Path(web_app.STATE_PATH).read_text(encoding='utf-8'))
+            self.assertIn('Seasonal Picks', state['pending_collection_cleanup'])
+
+            response = self.client.post('/api/toggle_recipe', json={
+                'name': 'Seasonal Picks',
+                'enabled': True,
+            })
+            self.assertEqual(response.status_code, 200)
+            state = json.loads(Path(web_app.STATE_PATH).read_text(encoding='utf-8'))
+            self.assertNotIn('Seasonal Picks', state['pending_collection_cleanup'])
+
+    def test_pending_deselected_collection_is_deleted_on_sync(self):
+        state = {'pending_collection_cleanup': ['Seasonal Picks']}
+        config = {'emby': {'server_url': 'http://emby.test', 'api_key': 'token'}}
+        fake_emby = object()
+        with patch.object(web_app, '_active_collection_names', return_value=set()), patch(
+            'src.emby_client.EmbyClient',
+            return_value=fake_emby,
+        ), patch('src.app_logic._remove_managed_collection', return_value=True) as remove_collection:
+            web_app._cleanup_pending_collections(state, config, [])
+
+        remove_collection.assert_called_once_with(fake_emby, 'Seasonal Picks', config)
+        self.assertEqual(state['pending_collection_cleanup'], [])
+
+    def test_deleting_trakt_list_queues_its_emby_collection_for_cleanup(self):
+        list_dir = Path(self.temp_dir.name) / 'traktlists'
+        list_dir.mkdir()
+        content = 'collection_name: Custom Horror Picks\nitems:\n  - 123\n'
+        (list_dir / 'Horror.yaml').write_text(content, encoding='utf-8')
+        with patch.object(web_app, 'load_config', return_value={
+            'traktlists': {'directory': 'traktlists'},
+            'emby': {},
+        }):
+            web_app._remove_list_library_export('traktlists', 'Horror.yaml', content)
+
+        state = json.loads(Path(web_app.STATE_PATH).read_text(encoding='utf-8'))
+        self.assertIn('Custom Horror Picks', state['pending_collection_cleanup'])
+
 
 if __name__ == '__main__':
     unittest.main()
