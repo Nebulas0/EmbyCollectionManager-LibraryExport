@@ -127,11 +127,13 @@ define(['emby-input', 'emby-button', 'emby-select'], function () {
 
     function saveConfiguration(view) {
         var button = view.querySelector('#mw-save');
+        var revertButton = view.querySelector('#mw-revert');
         var error = view.querySelector('#mw-config-error');
         var status = view.querySelector('#mw-config-status');
         var movieUserIds = selectedValues(view.querySelector('#mw-movie-users'));
         var tvUserIds = selectedValues(view.querySelector('#mw-tv-users'));
         button.disabled = true;
+        revertButton.disabled = true;
         error.textContent = '';
         status.textContent = 'Saving HomeScreen users: Movies ' + movieUserIds.length +
             ', TV Shows ' + tvUserIds.length + '.';
@@ -166,6 +168,25 @@ define(['emby-input', 'emby-button', 'emby-select'], function () {
             error.textContent = 'Could not save plugin settings: ' + (saveError.message || saveError);
         }).finally(function () {
             button.disabled = false;
+            revertButton.disabled = false;
+        });
+    }
+
+    function revertConfiguration(view) {
+        var button = view.querySelector('#mw-revert');
+        var saveButton = view.querySelector('#mw-save');
+        var error = view.querySelector('#mw-config-error');
+        var status = view.querySelector('#mw-config-status');
+        button.disabled = true;
+        saveButton.disabled = true;
+        error.textContent = '';
+        status.textContent = 'Reloading saved HomeScreen settings...';
+        loadConfiguration(view).then(function () {
+            if (!error.textContent)
+                status.textContent = 'Unsaved changes reverted to the saved settings.';
+        }).finally(function () {
+            button.disabled = false;
+            saveButton.disabled = false;
         });
     }
 
@@ -175,6 +196,9 @@ define(['emby-input', 'emby-button', 'emby-select'], function () {
         });
         view.querySelector('#mw-save').addEventListener('click', function () {
             saveConfiguration(view);
+        });
+        view.querySelector('#mw-revert').addEventListener('click', function () {
+            revertConfiguration(view);
         });
     };
 });

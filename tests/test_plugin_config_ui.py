@@ -18,6 +18,17 @@ class PluginConfigurationPageTests(unittest.TestCase):
         self.assertIn("ApiClient.getPluginConfiguration(pluginId)", script)
         self.assertIn("sameValues(saved.MovieHomeSectionUserIds, movieUserIds)", script)
         self.assertIn("sameValues(saved.TvHomeSectionUserIds, tvUserIds)", script)
+        self.assertIn("function revertConfiguration(view)", script)
+        self.assertIn("loadConfiguration(view).then(function ()", script)
+
+        html = (
+            Path(__file__).resolve().parents[1]
+            / 'plugins'
+            / 'EmbyCollectionManagerStrmBridge'
+            / 'configurationPage.html'
+        ).read_text(encoding='utf-8')
+        self.assertIn('id="mw-revert"', html)
+        self.assertIn('Revert unsaved changes', html)
 
 
 if __name__ == '__main__':
