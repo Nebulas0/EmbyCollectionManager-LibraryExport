@@ -470,9 +470,27 @@ namespace EmbyCollectionManagerStrmBridge
 
             config.ManagedHomeSections = config.ManagedHomeSections ?? new List<HomeSectionTracking>();
             var managedLibraries = GetManagedLibraries();
+            var movieLibraries = managedLibraries.Where(library => library.Kind == "movies").ToList();
+            var tvLibraries = managedLibraries.Where(library => library.Kind == "tv_shows").ToList();
+            config.ActiveMovieOutputLibrary = string.Join(", ", movieLibraries.Select(library => library.Name).Distinct());
+            config.ActiveTvOutputLibrary = string.Join(", ", tvLibraries.Select(library => library.Name).Distinct());
+            config.MovieHomeSectionStatus = HomeSectionStatus(
+                movieLibraries,
+                config.MovieHomeSectionLibraryId,
+                config.MovieHomeSectionUserIds);
+            config.TvHomeSectionStatus = HomeSectionStatus(
+                tvLibraries,
+                config.TvHomeSectionLibraryId,
+                config.TvHomeSectionUserIds);
             var desired = new List<DesiredHomeSection>();
             foreach (var library in managedLibraries)
             {
+                var configuredLibraryId = library.Kind == "movies"
+                    ? config.MovieHomeSectionLibraryId
+                    : config.TvHomeSectionLibraryId;
+                if (!string.IsNullOrEmpty(configuredLibraryId) &&
+                    !string.Equals(configuredLibraryId, library.Id, StringComparison.OrdinalIgnoreCase))
+                    continue;
                 var users = library.Kind == "movies"
                     ? config.MovieHomeSectionUserIds
                     : config.TvHomeSectionUserIds;
@@ -526,6 +544,26 @@ namespace EmbyCollectionManagerStrmBridge
 
             SyncHomeSectionExclusions(config, desired);
             plugin?.SaveConfiguration();
+        }
+
+        private static string HomeSectionStatus(
+            List<ManagedLibrary> detectedLibraries,
+            string configuredLibraryId,
+            List<string> configuredUsers)
+        {
+            if (detectedLibraries.Count == 0)
+                return "No active Manager output manifest found. Enable the list and run a Manager sync.";
+            if (!string.IsNullOrEmpty(configuredLibraryId) &&
+                !detectedLibraries.Any(library => string.Equals(
+                    library.Id,
+                    configuredLibraryId,
+                    StringComparison.OrdinalIgnoreCase)))
+                return "Selected library does not match an active Manager output. Select the same library on both pages or use Auto.";
+            if (detectedLibraries.Count > 1 && string.IsNullOrEmpty(configuredLibraryId))
+                return "Multiple active output libraries found. Select the intended one explicitly.";
+            if (configuredUsers == null || configuredUsers.Count == 0)
+                return "Output detected. Select HomeScreen users or All users.";
+            return "Output and HomeScreen settings are configured.";
         }
 
         private List<string> ResolveConfiguredUsers(List<string> configuredUsers)
@@ -875,13 +913,6 @@ namespace EmbyCollectionManagerStrmBridge
                                 ? "tv_shows" : string.Empty;
                     }
                     if (kind != "movies" && kind != "tv_shows")
-                        continue;
-                    var config = Plugin.Instance?.Configuration;
-                    var selectedLibraryId = kind == "movies"
-                        ? config?.MovieHomeSectionLibraryId
-                        : config?.TvHomeSectionLibraryId;
-                    if (!string.IsNullOrEmpty(selectedLibraryId) &&
-                        !string.Equals(selectedLibraryId, libraryId, StringComparison.OrdinalIgnoreCase))
                         continue;
                     result.Add(new ManagedLibrary
                     {

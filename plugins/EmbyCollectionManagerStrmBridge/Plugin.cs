@@ -82,6 +82,14 @@ namespace EmbyCollectionManagerStrmBridge
 
         public string TvHomeSectionSortOrder { get; set; } = "Ascending";
 
+        public string ActiveMovieOutputLibrary { get; set; } = string.Empty;
+
+        public string ActiveTvOutputLibrary { get; set; } = string.Empty;
+
+        public string MovieHomeSectionStatus { get; set; } = string.Empty;
+
+        public string TvHomeSectionStatus { get; set; } = string.Empty;
+
         public List<HomeSectionTracking> ManagedHomeSections { get; set; } = new List<HomeSectionTracking>();
 
         public List<HomeSectionExclusionTracking> ManagedHomeSectionExclusions { get; set; } =

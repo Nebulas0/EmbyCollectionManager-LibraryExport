@@ -92,6 +92,14 @@ define(['emby-input', 'emby-button', 'emby-select'], function () {
             view.querySelector('#mw-tv-sort').value = config.TvHomeSectionSortBy || 'SortName';
             view.querySelector('#mw-movie-order').value = config.MovieHomeSectionSortOrder || 'Ascending';
             view.querySelector('#mw-tv-order').value = config.TvHomeSectionSortOrder || 'Ascending';
+            view.querySelector('#mw-movie-detected').textContent = config.ActiveMovieOutputLibrary
+                ? 'Detected active Manager output: ' + config.ActiveMovieOutputLibrary
+                : 'No active Manager Movies output manifest detected.';
+            view.querySelector('#mw-tv-detected').textContent = config.ActiveTvOutputLibrary
+                ? 'Detected active Manager output: ' + config.ActiveTvOutputLibrary
+                : 'No active Manager TV output manifest detected.';
+            view.querySelector('#mw-movie-status').textContent = config.MovieHomeSectionStatus || '';
+            view.querySelector('#mw-tv-status').textContent = config.TvHomeSectionStatus || '';
             return Promise.all([loadUsers(view, config), loadLibraries(view, config)]);
         }).catch(function (error) {
             view.querySelector('#mw-config-error').textContent =
@@ -121,7 +129,7 @@ define(['emby-input', 'emby-button', 'emby-select'], function () {
             config.TvHomeSectionSortOrder = view.querySelector('#mw-tv-order').value;
             return window.ApiClient.updatePluginConfiguration(pluginId, config);
         }).then(function () {
-            status.textContent = 'Saved. HomeScreen sections will be synchronized by the bridge.';
+            status.textContent = 'Saved. The bridge is synchronizing the selected HomeScreen sections; status will update when you reopen this page.';
         }).catch(function (saveError) {
             error.textContent = 'Could not save plugin settings: ' + (saveError.message || saveError);
         }).finally(function () {
