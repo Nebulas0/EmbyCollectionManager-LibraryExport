@@ -67,6 +67,7 @@ namespace EmbyCollectionManagerStrmBridge
             _libraryManager.ItemUpdated += OnItemChanged;
             _libraryManager.ItemRemoved += OnItemRemoved;
             QueueHomeSectionSync(true);
+            Task.Run(ReconcileManagedSeries);
         }
 
         public static void RequestHomeSectionSync()
@@ -80,13 +81,49 @@ namespace EmbyCollectionManagerStrmBridge
             if (item == null || !IsSupportedCopy(item) || !TryFindLibraryRoot(item.Path, out _))
                 return;
 
+            QueueItemProcessing(item.InternalId);
+        }
+
+        private void QueueItemProcessing(long internalId)
+        {
             lock (_gate)
             {
-                if (!_inFlight.Add(item.InternalId))
+                if (!_inFlight.Add(internalId))
                     return;
             }
 
-            Task.Run(() => ProcessItem(item.InternalId));
+            Task.Run(() => ProcessItem(internalId));
+        }
+
+        private void ReconcileManagedSeries()
+        {
+            try
+            {
+                foreach (var library in GetManagedLibraries().Where(entry => entry.Kind == "tv_shows"))
+                {
+                    if (!long.TryParse(library.FolderItemId, out var folderItemId))
+                    {
+                        _logger.Warn("[Most Watched] Cannot reconcile Series for " + library.Name +
+                                     ": the underlying library folder item ID could not be resolved.");
+                        continue;
+                    }
+
+                    var seriesItems = _libraryManager.GetItemList(
+                        ManagedSeriesHelpers.BuildSeriesReconciliationQuery(folderItemId));
+                    if (seriesItems == null)
+                        continue;
+
+                    foreach (var series in seriesItems.OfType<Series>())
+                    {
+                        if (IsSupportedCopy(series))
+                            QueueItemProcessing(series.InternalId);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.Warn("[Most Watched] Could not reconcile existing managed Series: " + ex.Message);
+            }
         }
 
         private void OnItemRemoved(object sender, ItemChangeEventArgs args)
@@ -249,11 +286,11 @@ namespace EmbyCollectionManagerStrmBridge
                 if (!string.IsNullOrEmpty(directory))
                 {
                     var isStrm = item.Path.EndsWith(".strm", StringComparison.OrdinalIgnoreCase);
-                    changed |= SetLocalImage(
+                    changed |= ManagedSeriesHelpers.SetLocalImage(
                         item,
                         ImageType.Primary,
                         Path.Combine(directory, isStrm ? baseName + ".jpg" : "poster.jpg"));
-                    changed |= SetLocalImage(
+                    changed |= ManagedSeriesHelpers.SetLocalImage(
                         item,
                         ImageType.Thumb,
                         Path.Combine(directory, isStrm ? baseName + "-thumb.jpg" : "landscape.jpg"));
@@ -261,35 +298,10 @@ namespace EmbyCollectionManagerStrmBridge
             }
             else if (item is Series)
             {
-                changed |= SetLocalImage(item, ImageType.Primary, Path.Combine(item.Path, "poster.jpg"));
-                changed |= SetLocalImage(item, ImageType.Thumb, Path.Combine(item.Path, "landscape.jpg"));
+                changed |= ManagedSeriesHelpers.AttachGeneratedSeriesImages((Series)item);
             }
 
             return changed;
-        }
-
-        private static bool SetLocalImage(BaseItem item, ImageType imageType, string imagePath)
-        {
-            if (!File.Exists(imagePath))
-                return false;
-
-            var images = (item.ImageInfos ?? Array.Empty<ItemImageInfo>()).ToList();
-            var current = images.Where(image => image.Type == imageType).ToList();
-            var modified = File.GetLastWriteTimeUtc(imagePath);
-            if (current.Count == 1 &&
-                string.Equals(current[0].Path, imagePath, StringComparison.OrdinalIgnoreCase) &&
-                current[0].DateModified == modified)
-                return false;
-
-            images.RemoveAll(image => image.Type == imageType);
-            images.Add(new ItemImageInfo
-            {
-                Path = imagePath,
-                Type = imageType,
-                DateModified = modified
-            });
-            item.ImageInfos = images.ToArray();
-            return true;
         }
 
         private static string GetRankPrefix(string itemPath, string libraryRoot)
@@ -327,16 +339,10 @@ namespace EmbyCollectionManagerStrmBridge
                        TryFindLibraryRoot(item.Path, out _);
             if (item is Series &&
                 !string.IsNullOrEmpty(item.Path) &&
-                TryFindLibraryRoot(item.Path, out _))
+                TryFindLibraryRoot(item.Path, out var libraryRoot) &&
+                IsManagerOwnedSeriesFolder(item.Path, libraryRoot))
             {
-                try
-                {
-                    return Directory.EnumerateFiles(item.Path, "*.strm", SearchOption.AllDirectories).Any();
-                }
-                catch
-                {
-                    return false;
-                }
+                return true;
             }
             return false;
         }
@@ -344,7 +350,7 @@ namespace EmbyCollectionManagerStrmBridge
         private bool IsDistinctSymlinkCopy(BaseItem item, string libraryRoot)
         {
             if (item is Series)
-                return true;
+                return IsManagerOwnedSeriesFolder(item.Path, libraryRoot);
 
             var targetPath = ReadManagedLinkTarget(item.Path, libraryRoot);
             if (string.IsNullOrEmpty(targetPath))
@@ -352,6 +358,16 @@ namespace EmbyCollectionManagerStrmBridge
 
             var source = _libraryManager.FindByPath(targetPath, false);
             return source == null || source.InternalId != item.InternalId;
+        }
+
+        private static bool IsManagerOwnedSeriesFolder(string seriesPath, string libraryRoot)
+        {
+            var manifest = ReadManagedManifest(Path.Combine(libraryRoot, ManifestName));
+            return ManagedSeriesHelpers.IsManagerOwnedSeriesFolder(
+                seriesPath,
+                libraryRoot,
+                manifest?.Links?.Keys ?? Enumerable.Empty<string>(),
+                manifest?.Files?.Keys ?? Enumerable.Empty<string>());
         }
 
         private static string ReadManagedLinkTarget(string itemPath, string libraryRoot)
@@ -425,6 +441,9 @@ namespace EmbyCollectionManagerStrmBridge
 
             [DataMember(Name = "links")]
             public Dictionary<string, string>? Links { get; set; }
+
+            [DataMember(Name = "files")]
+            public Dictionary<string, string>? Files { get; set; }
         }
 
         private static string StreamSignature(List<MediaStream> streams)
@@ -493,13 +512,20 @@ namespace EmbyCollectionManagerStrmBridge
                 config.TvHomeSectionLibraryId,
                 config.TvHomeSectionUserIds);
             var desired = new List<DesiredHomeSection>();
+            var unresolvedFolderKinds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             foreach (var library in managedLibraries)
             {
+                if (string.IsNullOrWhiteSpace(library.FolderItemId))
+                {
+                    unresolvedFolderKinds.Add(library.Kind);
+                    _logger.Warn("[Most Watched] Could not resolve the underlying folder item for library " + library.Name);
+                    continue;
+                }
                 var configuredLibraryId = library.Kind == "movies"
                     ? config.MovieHomeSectionLibraryId
                     : config.TvHomeSectionLibraryId;
                 if (!string.IsNullOrEmpty(configuredLibraryId) &&
-                    !string.Equals(configuredLibraryId, library.Id, StringComparison.OrdinalIgnoreCase))
+                    !string.Equals(configuredLibraryId, library.ViewId, StringComparison.OrdinalIgnoreCase))
                     continue;
                 var users = library.Kind == "movies"
                     ? config.MovieHomeSectionUserIds
@@ -511,7 +537,8 @@ namespace EmbyCollectionManagerStrmBridge
                     desired.Add(new DesiredHomeSection
                     {
                         UserId = userId,
-                        LibraryId = library.Id,
+                        LibraryId = library.ViewId,
+                        FolderItemId = library.FolderItemId,
                         Kind = library.Kind,
                         LibraryName = library.Name,
                         Limit = library.Limit
@@ -527,6 +554,8 @@ namespace EmbyCollectionManagerStrmBridge
 
             foreach (var stale in config.ManagedHomeSections.ToList())
             {
+                if (unresolvedFolderKinds.Contains(stale.Kind))
+                    continue;
                 if (desiredKeys.Contains(TrackingKey(stale.UserId, stale.Kind, stale.LibraryId)))
                     continue;
                 var removed = false;
@@ -585,10 +614,18 @@ namespace EmbyCollectionManagerStrmBridge
                 return "No active Manager output manifest found. Enable the list and run a Manager sync.";
             if (!string.IsNullOrEmpty(configuredLibraryId) &&
                 !detectedLibraries.Any(library => string.Equals(
-                    library.Id,
+                    library.ViewId,
                     configuredLibraryId,
                     StringComparison.OrdinalIgnoreCase)))
                 return "Selected library does not match an active Manager output. Select the same library on both pages or use Auto.";
+            var selectedLibraries = string.IsNullOrEmpty(configuredLibraryId)
+                ? detectedLibraries
+                : detectedLibraries.Where(library => string.Equals(
+                    library.ViewId,
+                    configuredLibraryId,
+                    StringComparison.OrdinalIgnoreCase)).ToList();
+            if (selectedLibraries.Any(library => string.IsNullOrWhiteSpace(library.FolderItemId)))
+                return "Could not resolve the selected library's underlying folder item for its HomeScreen query.";
             if (detectedLibraries.Count > 1 && string.IsNullOrEmpty(configuredLibraryId))
                 return "Multiple active output libraries found. Select the intended one explicitly.";
             if (configuredUsers == null || configuredUsers.Count == 0)
@@ -885,6 +922,7 @@ namespace EmbyCollectionManagerStrmBridge
         {
             return HomeSectionBuilder.Build(
                 wanted.LibraryId,
+                wanted.FolderItemId,
                 displayName,
                 wanted.Kind,
                 wanted.Kind == "movies" ? config.MovieHomeSectionSortBy : config.TvHomeSectionSortBy,
@@ -942,9 +980,13 @@ namespace EmbyCollectionManagerStrmBridge
                     }
                     if (kind != "movies" && kind != "tv_shows")
                         continue;
+                    var underlyingFolder = _libraryManager.FindByPath(location, false);
                     result.Add(new ManagedLibrary
                     {
-                        Id = libraryId ?? string.Empty,
+                        ViewId = libraryId ?? string.Empty,
+                        FolderItemId = underlyingFolder?.InternalId > 0
+                            ? underlyingFolder.InternalId.ToString()
+                            : string.Empty,
                         Name = name,
                         Kind = kind,
                         Limit = Math.Max(1, Math.Min(manifest.Limit ?? 10, 100))
@@ -1020,7 +1062,8 @@ namespace EmbyCollectionManagerStrmBridge
 
         private sealed class ManagedLibrary
         {
-            public string Id { get; set; } = string.Empty;
+            public string ViewId { get; set; } = string.Empty;
+            public string FolderItemId { get; set; } = string.Empty;
             public string Name { get; set; } = string.Empty;
             public string Kind { get; set; } = string.Empty;
             public int Limit { get; set; } = 10;
@@ -1030,6 +1073,7 @@ namespace EmbyCollectionManagerStrmBridge
         {
             public string UserId { get; set; } = string.Empty;
             public string LibraryId { get; set; } = string.Empty;
+            public string FolderItemId { get; set; } = string.Empty;
             public string LibraryName { get; set; } = string.Empty;
             public string Kind { get; set; } = string.Empty;
             public int Limit { get; set; } = 10;

@@ -750,6 +750,106 @@ class MostWatchedLibraryExporterTests(unittest.TestCase):
         self.assertTrue((show_folders[0] / 'poster.jpg').is_file())
         self.assertEqual(list(output.rglob('*.strm')), [])
 
+    def test_top_ten_series_change_prunes_stale_owned_directories_and_refreshes_library(self):
+        emby = FakeEmby()
+        exporter = self.make_exporter(emby)
+        target_dir = self.output_root / 'Top TV'
+        emby.libraries = [{
+            'Id': 'tv-view-id',
+            'Name': 'Top TV',
+            'CollectionType': 'tvshows',
+            'Locations': [str(target_dir)],
+        }]
+        episode_path = self.media_root / 'television' / 'Source Show' / 'Season 01' / 'Episode.mkv'
+        episode_path.parent.mkdir(parents=True)
+        episode_path.write_bytes(b'episode')
+        emby.episodes = [{
+            'Id': 'episode-id',
+            'Type': 'Episode',
+            'Name': 'Episode',
+            'Path': str(episode_path),
+            'ParentIndexNumber': 1,
+            'IndexNumber': 1,
+        }]
+
+        def series_entry(index):
+            series = {
+                'Id': f'series-{index}',
+                'Type': 'Series',
+                'Name': f'Show {index:02d}',
+                'ProductionYear': 2020,
+                'Path': f'/source/Show {index:02d}',
+                'ProviderIds': {'Tvdb': str(10000 + index)},
+            }
+            return {'item': series, 'name': series['Name'], 'plays': 20 - index, 'watch_seconds': 100}
+
+        exporter.sync(
+            'tv_shows',
+            [series_entry(index) for index in range(12)],
+            create_emby_library=False,
+            target_library_id='tv-view-id',
+            output_mode='symlink',
+            image_variants=['poster'],
+            limit=10,
+        )
+        manifest_path = target_dir / '.most-watched-manifest.json'
+        old_manifest = json.loads(manifest_path.read_text())
+        old_manifest.pop('directories', None)
+        manifest_path.write_text(json.dumps(old_manifest), encoding='utf-8')
+        result = exporter.sync(
+            'tv_shows',
+            [series_entry(index) for index in range(2, 12)],
+            create_emby_library=False,
+            target_library_id='tv-view-id',
+            output_mode='symlink',
+            image_variants=['poster'],
+            limit=10,
+        )
+
+        output = Path(result['library_path'])
+        series_folders = [path for path in output.iterdir() if path.is_dir()]
+        self.assertEqual(len(series_folders), 10)
+        self.assertEqual(
+            {path.name for path in series_folders},
+            {f'{index:02d} - Show {index + 1:02d}' for index in range(1, 11)},
+        )
+        self.assertEqual(len(list(output.rglob('*.mkv'))), 10)
+        self.assertEqual(emby.refreshed, ['tv-view-id', 'tv-view-id'])
+        manifest = json.loads((output / '.most-watched-manifest.json').read_text())
+        self.assertEqual(manifest['limit'], 10)
+        self.assertEqual(len(manifest['links']), 10)
+        self.assertTrue(all(
+            (output / relative).is_dir()
+            for relative in manifest['directories']
+        ))
+
+    def test_pruning_preserves_unmanaged_file_in_obsolete_series_directory(self):
+        emby = FakeEmby()
+        exporter = self.make_exporter(emby)
+        episode_path = self.media_root / 'television' / 'Source Show' / 'Season 01' / 'Episode.mkv'
+        episode_path.parent.mkdir(parents=True)
+        episode_path.write_bytes(b'episode')
+        emby.episodes = [{
+            'Id': 'episode-id',
+            'Type': 'Episode',
+            'Name': 'Episode',
+            'Path': str(episode_path),
+            'ParentIndexNumber': 1,
+            'IndexNumber': 1,
+        }]
+        alpha = {'item': {'Id': 'alpha', 'Type': 'Series', 'Name': 'Alpha', 'Path': '/source/Alpha'}}
+        beta = {'item': {'Id': 'beta', 'Type': 'Series', 'Name': 'Beta', 'Path': '/source/Beta'}}
+        first = exporter.sync('tv_shows', [alpha, beta], create_emby_library=False, limit=10)
+        output = Path(first['library_path'])
+        stale_folder = next(path for path in output.iterdir() if path.is_dir() and 'Beta' in path.name)
+        unmanaged_file = stale_folder / 'user-note.txt'
+        unmanaged_file.write_text('keep', encoding='utf-8')
+
+        exporter.sync('tv_shows', [alpha], create_emby_library=False, limit=10)
+
+        self.assertTrue(stale_folder.is_dir())
+        self.assertEqual(unmanaged_file.read_text(encoding='utf-8'), 'keep')
+
     def test_ranked_show_strm_mode_keeps_a_series_with_seasons_and_ranked_art(self):
         emby = FakeEmby()
         exporter = self.make_exporter(emby)

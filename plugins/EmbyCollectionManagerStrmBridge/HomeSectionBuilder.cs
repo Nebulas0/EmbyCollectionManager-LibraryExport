@@ -9,7 +9,8 @@ namespace EmbyCollectionManagerStrmBridge
     public static class HomeSectionBuilder
     {
         public static ContentSection Build(
-            string libraryId,
+            string viewId,
+            string folderItemId,
             string libraryName,
             string kind,
             string sortBy,
@@ -27,9 +28,9 @@ namespace EmbyCollectionManagerStrmBridge
             limit = Math.Max(1, Math.Min(limit, 100));
 
             var section = existing ?? new ContentSection();
-            var excludedViews = BuildExcludedViews(libraryId, libraryViewIds, section.ExcludedFolders);
+            var excludedViews = BuildExcludedViews(viewId, libraryViewIds, section.ExcludedFolders);
             section.SectionType = "items";
-            section.ParentId = libraryId;
+            section.ParentId = viewId;
             section.CustomName = libraryName;
             section.ItemTypes = new[] { itemType };
             section.SortBy = sortBy;
@@ -39,7 +40,10 @@ namespace EmbyCollectionManagerStrmBridge
 
             section.Query = new HomeSectionItemsQuery
             {
-                ParentId = libraryId,
+                ParentId = folderItemId,
+                ParentIds = long.TryParse(folderItemId, out var folderInternalId)
+                    ? new[] { folderInternalId }
+                    : Array.Empty<long>(),
                 IncludeItemTypes = new[] { itemType },
                 ExcludeUserViewIds = excludedViews,
                 Limit = limit,
@@ -95,6 +99,8 @@ namespace EmbyCollectionManagerStrmBridge
     public sealed class HomeSectionItemsQuery : ItemsQuery
     {
         public string ParentId { get; set; } = string.Empty;
+
+        public long[] ParentIds { get; set; } = Array.Empty<long>();
 
         public string[] IncludeItemTypes { get; set; } = Array.Empty<string>();
 

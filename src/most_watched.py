@@ -10,7 +10,7 @@ import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 from io import BytesIO
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 from .library_export import (
     DEFAULT_MEDIA_ROOT,
@@ -799,30 +799,48 @@ class MostWatchedLibraryExporter:
                 logger.warning("Could not set rank Sort Name for Most Watched STRM item %s", expected_path)
 
     @staticmethod
-    def _load_manifest(path: Path) -> Tuple[Dict[str, str], Dict[str, str]]:
+    def _load_manifest(path: Path) -> Tuple[Dict[str, str], Dict[str, str], Set[str]]:
         if path.is_symlink():
             raise ValueError('Most Watched ownership manifest must not be a symlink')
         if not path.exists():
-            return {}, {}
+            return {}, {}, set()
         try:
             data = json.loads(path.read_text(encoding='utf-8'))
         except (OSError, ValueError) as exc:
             raise ValueError(f'Could not read Most Watched ownership manifest: {exc}') from exc
         files = data.get('files') if isinstance(data, dict) else None
         links = data.get('links', {}) if isinstance(data, dict) else None
-        if not isinstance(files, dict) or not isinstance(links, dict):
+        directories = data.get('directories') if isinstance(data, dict) else None
+        if not isinstance(files, dict) or not isinstance(links, dict) or (
+            directories is not None and not isinstance(directories, list)
+        ):
             raise ValueError('Most Watched ownership manifest has an invalid format')
 
         def validate_paths(values: Dict[str, Any]) -> Dict[str, str]:
             result = {}
             for relative, value in values.items():
+                if not isinstance(relative, str):
+                    raise ValueError('Most Watched ownership manifest contains an unsafe path')
                 candidate = Path(relative)
                 if candidate.is_absolute() or '..' in candidate.parts or not isinstance(value, str):
                     raise ValueError('Most Watched ownership manifest contains an unsafe path')
                 result[candidate.as_posix()] = value
             return result
 
-        return validate_paths(files), validate_paths(links)
+        validated_files = validate_paths(files)
+        validated_links = validate_paths(links)
+        if directories is None:
+            # Older manifests did not track owned directories. Their recorded media paths
+            # are the only safe source from which to infer removable empty ancestors.
+            owned_directories = set()
+            for relative in list(validated_files) + list(validated_links):
+                parent = Path(relative).parent
+                while parent != Path('.'):
+                    owned_directories.add(parent.as_posix())
+                    parent = parent.parent
+        else:
+            owned_directories = set(validate_paths({relative: '' for relative in directories}))
+        return validated_files, validated_links, owned_directories
 
     @staticmethod
     def _safe_output_path(root: Path, relative: str) -> Path:
@@ -839,6 +857,35 @@ class MostWatchedLibraryExporter:
                 raise ValueError(f'Refusing to write through a symlink in Most Watched output: {parent}')
         return destination
 
+    @staticmethod
+    def _safe_output_directory(root: Path, relative: str) -> Path:
+        candidate = Path(relative)
+        if candidate.is_absolute() or '..' in candidate.parts:
+            raise ValueError('Refusing an unsafe Most Watched directory path')
+        directory = root / candidate
+        if not _within(directory, root):
+            raise ValueError('Most Watched directory path escaped its library directory')
+        current = root
+        for part in candidate.parts:
+            current = current / part
+            if current.is_symlink():
+                raise ValueError(f'Refusing to traverse a symlink in Most Watched output: {current}')
+        return directory
+
+    @staticmethod
+    def _create_output_parent(root: Path, destination: Path) -> Set[str]:
+        missing = []
+        current = destination.parent
+        while current != root and not current.exists():
+            missing.append(current)
+            current = current.parent
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        created = set()
+        for directory in missing:
+            if directory.is_dir() and not directory.is_symlink() and _within(directory, root):
+                created.add(directory.relative_to(root).as_posix())
+        return created
+
     def _reconcile_files(
         self,
         kind: str,
@@ -849,10 +896,10 @@ class MostWatchedLibraryExporter:
         if library_dir is None:
             _, _, library_dir, _ = self._library_dir(kind)
         manifest_path = library_dir / self._manifest_name
-        old_files, old_links = self._load_manifest(manifest_path)
+        old_files, old_links, old_directories = self._load_manifest(manifest_path)
         if set(planned_files).intersection(planned_links):
             raise ValueError('Most Watched plan contains a path used by both a file and a symlink')
-        if not planned_files and not planned_links and not old_files and not old_links:
+        if not planned_files and not planned_links and not old_files and not old_links and not old_directories:
             return library_dir, False, False
 
         library_dir.mkdir(parents=True, exist_ok=True)
@@ -860,6 +907,7 @@ class MostWatchedLibraryExporter:
             relative: hashlib.sha256(content).hexdigest()
             for relative, content in planned_files.items()
         }
+        created_directories: Set[str] = set()
 
         for relative in planned_files:
             destination = self._safe_output_path(library_dir, relative)
@@ -889,7 +937,7 @@ class MostWatchedLibraryExporter:
         changed = False
         for relative, content in planned_files.items():
             destination = self._safe_output_path(library_dir, relative)
-            destination.parent.mkdir(parents=True, exist_ok=True)
+            created_directories.update(self._create_output_parent(library_dir, destination))
             if destination.is_symlink():
                 destination.unlink()
                 changed = True
@@ -907,7 +955,7 @@ class MostWatchedLibraryExporter:
 
         for relative, target in planned_links.items():
             destination = self._safe_output_path(library_dir, relative)
-            destination.parent.mkdir(parents=True, exist_ok=True)
+            created_directories.update(self._create_output_parent(library_dir, destination))
             if destination.is_symlink() and os.readlink(destination) == target:
                 continue
             if destination.is_symlink() or destination.exists():
@@ -938,11 +986,39 @@ class MostWatchedLibraryExporter:
                 destination.unlink()
                 changed = True
 
+        desired_paths = list(planned_files) + list(planned_links)
+        retained_directories = {
+            directory for directory in old_directories
+            if any(path.startswith(directory.rstrip('/') + '/') for path in desired_paths)
+        }
+        owned_directories = retained_directories.union(created_directories)
+        stale_directories = old_directories.difference(retained_directories)
+        for relative in sorted(stale_directories, key=lambda path: len(Path(path).parts), reverse=True):
+            try:
+                directory = self._safe_output_directory(library_dir, relative)
+                if directory.is_symlink() or not directory.is_dir():
+                    continue
+                directory.rmdir()
+                changed = True
+            except OSError:
+                # Non-empty directories may contain user-owned data; keep them untouched.
+                try:
+                    directory = self._safe_output_directory(library_dir, relative)
+                    if directory.is_dir() and not directory.is_symlink():
+                        owned_directories.add(relative)
+                except (OSError, ValueError):
+                    pass
+                continue
+            except ValueError:
+                # Never traverse or remove a directory that may have been replaced by a symlink.
+                continue
+
         manifest = {
             'version': 1,
             'updated': datetime.now(timezone.utc).isoformat(),
             'files': retained_files,
             'links': retained_links,
+            'directories': sorted(owned_directories),
         }
         with tempfile.NamedTemporaryFile(
             mode='w',
