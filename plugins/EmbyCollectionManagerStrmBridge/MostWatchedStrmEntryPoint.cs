@@ -452,6 +452,13 @@ namespace EmbyCollectionManagerStrmBridge
                 catch (Exception ex)
                 {
                     _logger.Warn("[Most Watched] Could not synchronize HomeScreen sections: " + ex.Message);
+                    var config = Plugin.Instance?.Configuration;
+                    if (config != null)
+                    {
+                        config.MovieHomeSectionStatus = "HomeScreen sync failed; check the Emby STRM Bridge log.";
+                        config.TvHomeSectionStatus = "HomeScreen sync failed; check the Emby STRM Bridge log.";
+                        Plugin.Instance?.SaveConfiguration();
+                    }
                 }
                 finally
                 {
@@ -512,22 +519,27 @@ namespace EmbyCollectionManagerStrmBridge
                 section.UserId,
                 section.Kind,
                 section.LibraryId)), StringComparer.OrdinalIgnoreCase);
+            var failedKinds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
             foreach (var stale in config.ManagedHomeSections.ToList())
             {
                 if (desiredKeys.Contains(TrackingKey(stale.UserId, stale.Kind, stale.LibraryId)))
                     continue;
+                var removed = false;
                 try
                 {
                     var internalUserId = _userManager.GetInternalId(stale.UserId);
                     if (!string.IsNullOrEmpty(stale.SectionId))
                         _userManager.DeleteHomeSections(internalUserId, new[] { stale.SectionId }, CancellationToken.None);
+                    removed = true;
                 }
                 catch (Exception ex)
                 {
+                    failedKinds.Add(stale.Kind);
                     _logger.Warn("[Most Watched] Could not remove an obsolete HomeScreen section: " + ex.Message);
                 }
-                config.ManagedHomeSections.Remove(stale);
+                if (removed)
+                    config.ManagedHomeSections.Remove(stale);
             }
 
             foreach (var wanted in desired)
@@ -538,11 +550,25 @@ namespace EmbyCollectionManagerStrmBridge
                 }
                 catch (Exception ex)
                 {
+                    failedKinds.Add(wanted.Kind);
                     _logger.Warn("[Most Watched] HomeScreen section for " + wanted.LibraryName + " failed: " + ex.Message);
                 }
             }
 
-            SyncHomeSectionExclusions(config, desired);
+            try
+            {
+                SyncHomeSectionExclusions(config, desired);
+            }
+            catch (Exception ex)
+            {
+                foreach (var kind in desired.Select(section => section.Kind).Distinct())
+                    failedKinds.Add(kind);
+                _logger.Warn("[Most Watched] Could not update section exclusions: " + ex.Message);
+            }
+            if (failedKinds.Contains("movies"))
+                config.MovieHomeSectionStatus = "HomeScreen sync failed; check the Emby STRM Bridge log.";
+            if (failedKinds.Contains("tv_shows"))
+                config.TvHomeSectionStatus = "HomeScreen sync failed; check the Emby STRM Bridge log.";
             plugin?.SaveConfiguration();
         }
 

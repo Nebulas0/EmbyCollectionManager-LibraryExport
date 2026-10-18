@@ -197,6 +197,28 @@ class LibraryExportSettingsTests(unittest.TestCase):
         self.assertIn(b'value="source-movies" disabled', response.data)
         self.assertIn(b'outside the Manager writable output mount', response.data)
 
+    def test_collection_export_library_is_visible_but_not_selectable_as_most_watched_target(self):
+        output_root = Path(self.temp_dir.name) / 'exports'
+        target_path = output_root / 'Collection Export'
+        target_path.mkdir(parents=True)
+        (target_path / '.embycollectionmanager.json').write_text('{}', encoding='utf-8')
+        libraries = [{
+            'Id': 'collection-library',
+            'Name': 'Collection Export',
+            'CollectionType': 'movies',
+            'Locations': [str(target_path)],
+        }]
+        with patch.object(web_app, 'DEFAULT_OUTPUT_ROOT', str(output_root)), patch.object(
+            web_app,
+            'OUTPUT_MOUNT_ROOT',
+            output_root,
+        ), patch.object(web_app, 'get_emby_libraries', return_value=libraries):
+            response = self.client.get('/most-watched')
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b'value="collection-library" disabled', response.data)
+        self.assertIn(b'already managed by a collection export', response.data)
+
     def test_most_watched_page_shows_default_values_and_plugin_setup_hint(self):
         response = self.client.get('/most-watched')
 

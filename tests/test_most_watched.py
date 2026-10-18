@@ -402,6 +402,21 @@ class MostWatchedLibraryExporterTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'must not overlap any source media mount'):
             overlapping_mounts._library_dir('movies', 'media-id')
 
+    def test_selected_output_library_rejects_collection_export_directory(self):
+        emby = FakeEmby()
+        target_dir = self.output_root / 'Collection Export'
+        target_dir.mkdir()
+        (target_dir / '.embycollectionmanager.json').write_text('{}')
+        emby.libraries = [{
+            'Id': 'collection-export-id',
+            'Name': 'Collection Export',
+            'CollectionType': 'movies',
+            'Locations': [str(target_dir)],
+        }]
+
+        with self.assertRaisesRegex(ValueError, 'managed by a collection export'):
+            self.make_exporter(emby)._library_dir('movies', 'collection-export-id')
+
     def test_ranked_movie_symlink_has_badged_poster_and_never_copies_media(self):
         emby = FakeEmby()
         exporter = self.make_exporter(emby)
