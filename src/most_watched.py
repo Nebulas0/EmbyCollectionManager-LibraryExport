@@ -799,17 +799,18 @@ class MostWatchedLibraryExporter:
                 logger.warning("Could not set rank Sort Name for Most Watched STRM item %s", expected_path)
 
     @staticmethod
-    def _load_manifest(path: Path) -> Tuple[Dict[str, str], Dict[str, str], Set[str]]:
+    def _load_manifest(path: Path) -> Tuple[Dict[str, str], Dict[str, str], Set[str], bool, bool]:
         if path.is_symlink():
             raise ValueError('Most Watched ownership manifest must not be a symlink')
         if not path.exists():
-            return {}, {}, set()
+            return {}, {}, set(), False, False
         try:
             data = json.loads(path.read_text(encoding='utf-8'))
         except (OSError, ValueError) as exc:
             raise ValueError(f'Could not read Most Watched ownership manifest: {exc}') from exc
         files = data.get('files') if isinstance(data, dict) else None
         links = data.get('links', {}) if isinstance(data, dict) else None
+        has_directory_metadata = isinstance(data, dict) and 'directories' in data
         directories = data.get('directories') if isinstance(data, dict) else None
         if not isinstance(files, dict) or not isinstance(links, dict) or (
             directories is not None and not isinstance(directories, list)
@@ -840,7 +841,14 @@ class MostWatchedLibraryExporter:
                     parent = parent.parent
         else:
             owned_directories = set(validate_paths({relative: '' for relative in directories}))
-        return validated_files, validated_links, owned_directories
+        legacy_tv_manifest = (
+            isinstance(data, dict)
+            and not has_directory_metadata
+            and data.get('kind') == 'tv_shows'
+            and data.get('active', True) is not False
+            and bool(validated_files or validated_links)
+        )
+        return validated_files, validated_links, owned_directories, has_directory_metadata, legacy_tv_manifest
 
     @staticmethod
     def _safe_output_path(root: Path, relative: str) -> Path:
@@ -896,7 +904,7 @@ class MostWatchedLibraryExporter:
         if library_dir is None:
             _, _, library_dir, _ = self._library_dir(kind)
         manifest_path = library_dir / self._manifest_name
-        old_files, old_links, old_directories = self._load_manifest(manifest_path)
+        old_files, old_links, old_directories, has_directory_metadata, legacy_tv_manifest = self._load_manifest(manifest_path)
         if set(planned_files).intersection(planned_links):
             raise ValueError('Most Watched plan contains a path used by both a file and a symlink')
         if not planned_files and not planned_links and not old_files and not old_links and not old_directories:
@@ -934,7 +942,8 @@ class MostWatchedLibraryExporter:
                 if _sha256_file(destination) != old_files[relative]:
                     raise ValueError(f'Refusing to replace a modified Most Watched output: {destination}')
 
-        changed = False
+        # Migrate old manifests once so the resulting scan reconciles stale indexed items too.
+        changed = manifest_path.is_file() and not has_directory_metadata
         for relative, content in planned_files.items():
             destination = self._safe_output_path(library_dir, relative)
             created_directories.update(self._create_output_parent(library_dir, destination))
@@ -1012,6 +1021,31 @@ class MostWatchedLibraryExporter:
             except ValueError:
                 # Never traverse or remove a directory that may have been replaced by a symlink.
                 continue
+
+        if legacy_tv_manifest:
+            desired_series_directories = {
+                Path(relative).parts[0]
+                for relative in desired_paths
+                if Path(relative).parts
+            }
+            for directory in library_dir.iterdir():
+                match = re.match(r'^(\d{2,}) - .+', directory.name)
+                if (
+                    directory.name in desired_series_directories
+                    or match is None
+                    or int(match.group(1)) > 100
+                    or directory.is_symlink()
+                    or not directory.is_dir()
+                ):
+                    continue
+                try:
+                    # Legacy manifests used rank-prefixed top-level names for managed Series.
+                    next(directory.iterdir())
+                except StopIteration:
+                    directory.rmdir()
+                    changed = True
+                except OSError:
+                    continue
 
         manifest = {
             'version': 1,

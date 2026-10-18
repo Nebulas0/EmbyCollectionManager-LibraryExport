@@ -375,6 +375,18 @@ class MostWatchedLibraryExporterTests(unittest.TestCase):
         self.assertEqual(manifest['limit'], 5)
         self.assertEqual(result['limit'], 5)
 
+        manifest.pop('directories', None)
+        (target_dir / '.most-watched-manifest.json').write_text(json.dumps(manifest), encoding='utf-8')
+        emby.refreshed.clear()
+        exporter.sync(
+            'movies',
+            [{'item': item, 'name': item['Name'], 'plays': 3, 'watch_seconds': 1000}],
+            create_emby_library=False,
+            target_library_id='top-movies-id',
+            limit=5,
+        )
+        self.assertEqual(emby.refreshed, ['top-movies-id'])
+
     def test_selected_output_library_must_be_inside_writable_export_mount(self):
         emby = FakeEmby()
         emby.libraries = [{
@@ -796,6 +808,11 @@ class MostWatchedLibraryExporterTests(unittest.TestCase):
         old_manifest = json.loads(manifest_path.read_text())
         old_manifest.pop('directories', None)
         manifest_path.write_text(json.dumps(old_manifest), encoding='utf-8')
+        legacy_empty_dirs = [target_dir / '13 - Legacy Show', target_dir / '14 - Legacy Show']
+        for directory in legacy_empty_dirs:
+            directory.mkdir()
+        unmanaged_empty_dir = target_dir / 'Manual Empty Folder'
+        unmanaged_empty_dir.mkdir()
         result = exporter.sync(
             'tv_shows',
             [series_entry(index) for index in range(2, 12)],
@@ -807,8 +824,13 @@ class MostWatchedLibraryExporterTests(unittest.TestCase):
         )
 
         output = Path(result['library_path'])
-        series_folders = [path for path in output.iterdir() if path.is_dir()]
+        series_folders = [
+            path for path in output.iterdir()
+            if path.is_dir() and path.name[:2].isdigit() and path.name[2:5] == ' - '
+        ]
         self.assertEqual(len(series_folders), 10)
+        self.assertTrue(unmanaged_empty_dir.is_dir())
+        self.assertTrue(all(not directory.exists() for directory in legacy_empty_dirs))
         self.assertEqual(
             {path.name for path in series_folders},
             {f'{index:02d} - Show {index + 1:02d}' for index in range(1, 11)},

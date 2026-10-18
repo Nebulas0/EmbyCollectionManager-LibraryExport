@@ -6,7 +6,7 @@ The HomeScreen row uses the selected library's name and items, with the configur
 
 For symlink output, Emby must index a distinct item under the manager-owned path. The bridge reconciles existing manager-owned Series at startup and attaches their generated `poster.jpg` as the Primary image; it checks the active manifest to distinguish those copies from source-library Series. For other symlink items, if Emby resolves the link back to the original item, the bridge skips modifying its Sort Name or image references. `.strm` remains the reliable isolated-copy mode in that case. The plugin never modifies source media files.
 
-The Manager records the directories it creates in the Most Watched ownership manifest. On reconciliation it prunes only empty recorded directories (legacy manifests infer candidates only from previously managed file/link paths); non-empty or untracked directories are left alone. A targeted refresh is requested when files, links, or directories change.
+The Manager records the directories it creates in the Most Watched ownership manifest. On reconciliation it prunes only empty recorded directories. Legacy active TV manifests also permit pruning empty rank-prefixed top-level Series folders reserved by the old exporter; other untracked or non-empty directories are left alone. A targeted refresh is requested when files, links, or directories change.
 
 The prebuilt DLL is in `dist/EmbyCollectionManagerStrmBridge.dll` and is built against Emby 4.10.1.0 reference assemblies. The plugin loads on the accessible 4.10.1.0 server; HomeScreen behavior and playback still need end-to-end testing with populated Most Watched libraries.
 
