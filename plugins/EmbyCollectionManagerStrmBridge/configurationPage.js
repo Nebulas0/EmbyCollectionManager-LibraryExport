@@ -4,11 +4,17 @@ define(['emby-input', 'emby-button', 'emby-select'], function () {
     var pluginId = '3d9e8cda-9217-4ca9-9353-8c89adda7789';
 
     function selectedValues(select) {
-        var selected = Array.from(select.options).filter(function (option) {
-            return option.selected;
-        }).map(function (option) {
-            return option.value;
-        });
+        var selected = typeof select.getValues === 'function'
+            ? select.getValues()
+            : [];
+        if (!Array.isArray(selected) || selected.length === 0) {
+            selected = Array.from(select.options).filter(function (option) {
+                return option.selected;
+            }).map(function (option) {
+                return option.value;
+            });
+        }
+        selected = selected.map(String);
         return selected.indexOf('*') >= 0 ? ['*'] : selected;
     }
 
@@ -21,9 +27,14 @@ define(['emby-input', 'emby-button', 'emby-select'], function () {
     }
 
     function setSelectedValues(select, values) {
-        var selected = new Set((values || []).map(String));
+        var selected = (values || []).map(String);
+        if (typeof select.setValues === 'function') {
+            select.setValues(selected, false);
+            return;
+        }
+        var selectedSet = new Set(selected);
         Array.from(select.options).forEach(function (option) {
-            option.selected = selected.has(String(option.value));
+            option.selected = selectedSet.has(String(option.value));
         });
     }
 
@@ -54,12 +65,9 @@ define(['emby-input', 'emby-button', 'emby-select'], function () {
                     select.appendChild(option);
                 });
                 select.onchange = function () {
-                    var all = select.options[0];
-                    if (all.selected) {
-                        Array.from(select.options).slice(1).forEach(function (option) {
-                            option.selected = false;
-                        });
-                    }
+                    var selected = selectedValues(select);
+                    if (selected.indexOf('*') >= 0 && selected.length > 1)
+                        setSelectedValues(select, ['*']);
                 };
             });
             setSelectedValues(view.querySelector('#mw-movie-users'), config.MovieHomeSectionUserIds);
